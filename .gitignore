@@ -17,6 +17,8 @@ dist/
 *.egg-info/
 
 # Local dev / build artifacts
+.claude/
+audit.log
 .playwright-mcp/
 benchmark-chart.html
 benchmark-charts.png
