@@ -777,6 +777,7 @@ class OpenWhisperMenuBar(rumps.App):
         benchmark_mode = bool(advanced_cfg.get('benchmark_mode', False))
         streaming_enabled = bool(advanced_cfg.get('streaming_transcribe_enabled', False))
         fast_typing_enabled = bool(advanced_cfg.get('fast_typing_enabled', True))
+        ax_typing_enabled = bool(advanced_cfg.get('ax_typing_enabled', True))
         sound_enabled = bool(cfg.get('sound_enabled', False))
         overlay_enabled = bool(cfg.get('overlay_enabled', True))
         overlay_translucent = bool(cfg.get('overlay_translucent', True))
@@ -901,6 +902,10 @@ class OpenWhisperMenuBar(rumps.App):
         self.fast_typing_item = rumps.MenuItem("Fast Typing", callback=self.toggle_fast_typing)
         self.fast_typing_item.state = 1 if fast_typing_enabled else 0
         advanced_menu.add(self.fast_typing_item)
+
+        self.ax_typing_item = rumps.MenuItem("AX Typing", callback=self.toggle_ax_typing)
+        self.ax_typing_item.state = 1 if ax_typing_enabled else 0
+        advanced_menu.add(self.ax_typing_item)
 
         self.sound_item = rumps.MenuItem("Sound Feedback", callback=self.toggle_sound)
         self.sound_item.state = 1 if sound_enabled else 0
@@ -1560,6 +1565,20 @@ class OpenWhisperMenuBar(rumps.App):
         save_config(cfg)
         self.fast_typing_item.state = 1 if new_val else 0
         self._queue_status(f"Fast typing {'on' if new_val else 'off'} — restarting daemon…")
+        threading.Thread(target=self._restart_daemon, daemon=True).start()
+
+    def toggle_ax_typing(self, sender):
+        # AX Typing is a default-on flag; absence-of-key means "on".
+        cfg = load_config()
+        advanced = cfg.get('advanced', {})
+        if not isinstance(advanced, dict):
+            advanced = {}
+        new_val = not bool(advanced.get('ax_typing_enabled', True))
+        advanced['ax_typing_enabled'] = new_val
+        cfg['advanced'] = advanced
+        save_config(cfg)
+        self.ax_typing_item.state = 1 if new_val else 0
+        self._queue_status(f"AX typing {'on' if new_val else 'off'} — restarting daemon…")
         threading.Thread(target=self._restart_daemon, daemon=True).start()
 
     def toggle_sound(self, sender):

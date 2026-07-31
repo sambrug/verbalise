@@ -210,6 +210,19 @@ KEY_MAP = {
     'cmd_r':   keyboard.Key.cmd_r,
 }
 
+# Quartz modifier flag bits (kCGEventFlagMask*). Left/right share a bit, so
+# the watchdog can't distinguish shift_l from shift_r — that's fine; it
+# only fires when pynput has already lost the key state anyway.
+_MODIFIER_FLAG_MASKS = {
+    keyboard.Key.shift_l: 0x00020000,
+    keyboard.Key.shift_r: 0x00020000,
+    keyboard.Key.ctrl_l:  0x00040000,
+    keyboard.Key.ctrl_r:  0x00040000,
+    keyboard.Key.alt_l:   0x00080000,
+    keyboard.Key.alt_r:   0x00080000,
+    keyboard.Key.cmd_r:   0x00100000,
+}
+
 
 def log(msg):
     """Print a timestamped log message to stderr."""
@@ -879,9 +892,24 @@ class OpenWhisper:
         self._stream = None
         self._max_duration_timer = None
         self._lock = threading.Lock()
+        # Serializes start_recording / stop_and_transcribe so a fast
+        # release can't tear down the stream before start has opened it.
+        # The listener thread never holds this — only the worker threads do.
+        self._record_lifecycle_lock = threading.Lock()
         self._record_start_time = None
         self._listener = None
         self._shutdown = threading.Event()
+        # Set when a stream teardown had to be abandoned mid-call, meaning a
+        # thread is still stuck inside PortAudio and the library must not be
+        # torn down underneath it.
+        self._audio_subsystem_suspect = False
+        self._last_stream_status_log = 0.0
+        # When the current stop/transcribe pass started, so Escape can tell
+        # a slow transcription from a stalled one.
+        self._stop_started_at = None
+        # Bumped by force_reset so an abandoned transcription that finishes
+        # later doesn't paste text into whatever the user is doing by then.
+        self._dictation_seq = 0
 
         # Streaming transcription state (set up per-recording when enabled)
         self._streamer = None
@@ -942,6 +970,49 @@ class OpenWhisper:
         while self._recording:
             self._overlay_send({"cmd": "level", "v": round(self._current_rms, 4)})
             time.sleep(0.033)
+
+    def _key_watchdog(self):
+        """Force-stop if the trigger combo isn't actually held anymore.
+
+        pynput's macOS event tap can drop release events: if a callback ever
+        blocks for too long (e.g. a slow audio stream open), macOS throttles
+        or disables the tap, and key-up events stop arriving. Without this,
+        recording then runs until max_duration. Poll modifier flag state
+        directly via Quartz so any missed release recovers within ~75ms.
+        """
+        try:
+            from Quartz import (
+                CGEventSourceFlagsState,
+                kCGEventSourceStateCombinedSessionState,
+            )
+        except ImportError:
+            return
+        required_mask = 0
+        for k in self._trigger_keys:
+            m = _MODIFIER_FLAG_MASKS.get(k)
+            if m is None:
+                # Non-modifier trigger; flag-state polling won't work.
+                return
+            required_mask |= m
+        # Small grace period — the user can legitimately release one key
+        # a fraction of a second before the stream has finished opening.
+        time.sleep(0.15)
+        while self._recording and self._key_held:
+            flags = CGEventSourceFlagsState(kCGEventSourceStateCombinedSessionState)
+            if (flags & required_mask) != required_mask:
+                log("Watchdog: trigger combo no longer held — forcing stop")
+                with self._lock:
+                    if not self._key_held:
+                        return
+                    self._key_held = False
+                    self._processing = True
+                self._combo_held.clear()
+                if self._max_duration_timer:
+                    self._max_duration_timer.cancel()
+                    self._max_duration_timer = None
+                threading.Thread(target=self.stop_and_transcribe, daemon=True).start()
+                return
+            time.sleep(0.075)
 
     def preload_whisper(self):
         log("  Importing MLX Whisper...")
@@ -1019,6 +1090,7 @@ class OpenWhisper:
             'samplerate': self.sample_rate,
             'channels': 1,
             'dtype': 'float32',
+            'blocksize': self._AUDIO_BLOCKSIZE,
         }
         device = self.config.get('input_device')
         if device:
@@ -1026,8 +1098,9 @@ class OpenWhisper:
         try:
             stream = sd.InputStream(**kwargs)
             stream.start()
-            stream.stop()
-            stream.close()
+            # Bounded teardown — a wedged device here must not stop the
+            # daemon from finishing startup.
+            self._teardown_stream(stream, context="pre-warm")
         except Exception as e:
             log(f"  Audio pre-warm skipped ({e})")
 
@@ -1267,6 +1340,110 @@ class OpenWhisper:
     _AUDIO_BUFFER_CEILING_FACTOR = 2
     _AUDIO_BUFFER_HARD_CAP_SECONDS = 30 * 60
 
+    # Audio callback block size, in frames. Left unset, PortAudio picks a
+    # very small buffer and our Python callback then overruns its real-time
+    # deadline roughly once a second (visible in Console as CoreAudio
+    # "Audio IO Overload" reports). 512 frames = 32ms at 16kHz, which
+    # matches the ~30fps level feed the pill's waveform consumes.
+    _AUDIO_BLOCKSIZE = 512
+
+    # How long a stream teardown is allowed to take before we abandon it.
+    # A healthy stop+close is ~0.1s.
+    _STREAM_TEARDOWN_TIMEOUT = 1.5
+
+    # If not one audio frame has arrived this long after the stream started,
+    # treat the device's IO thread as dead and reopen the stream once.
+    _CAPTURE_HEALTH_DELAY = 0.4
+
+    # How long the stop path may be in flight before Escape is allowed to
+    # abandon it. Normal transcription of a short clip is 1-2s; a 5 minute
+    # clip can take ~20s, so this only fires when the user has decided
+    # something is wrong.
+    _STALL_ESCAPE_THRESHOLD = 5.0
+
+    def _audio_callback(self, indata, frames, time_info, status):
+        if status:
+            self._note_stream_status(status)
+        if not self._recording:
+            return
+        if self._audio_total_samples >= self._audio_buffer_ceiling:
+            # Safety net: max_duration timer should have fired by now.
+            # Stop appending; the existing release/auto-stop flow will
+            # tear the stream down on the next user release or timer.
+            if self._recording:
+                log(f"Audio buffer ceiling reached "
+                    f"({self._audio_buffer_ceiling / self.sample_rate:.0f}s) — stopping")
+                self._recording = False
+            return
+        self._audio_blocks.append(indata.copy())
+        self._audio_total_samples += frames
+        self._current_rms = float(np.sqrt(np.mean(indata ** 2)))
+
+    def _note_stream_status(self, status):
+        """Log PortAudio status flags (overflow, etc.), rate-limited.
+
+        These are the app-side symptom of the CoreAudio overloads that
+        precede a dead IO thread, so they're worth having in the log — but
+        they can arrive on every callback, hence the 5s throttle.
+        """
+        now = time.time()
+        if now - self._last_stream_status_log < 5.0:
+            return
+        self._last_stream_status_log = now
+        log(f"Audio stream status: {status}")
+
+    def _open_input_stream(self):
+        kwargs = {
+            'samplerate': self.sample_rate,
+            'channels': 1,
+            'dtype': 'float32',
+            'blocksize': self._AUDIO_BLOCKSIZE,
+            'callback': self._audio_callback,
+        }
+        device = self.config.get('input_device')
+        if device:
+            kwargs['device'] = device
+        return sd.InputStream(**kwargs)
+
+    def _teardown_stream(self, stream, context="stop"):
+        """Stop and close an input stream without ever blocking the caller.
+
+        PortAudio's blocking stop waits for the audio callback to
+        acknowledge. When macOS has killed the device's IO thread that
+        callback never arrives, `stop()` never returns, and the whole
+        daemon wedges behind it: the pill stays on "recording", the
+        transcription never runs, the trigger key goes dead and only a
+        restart recovers. So: `abort()` (we have no output buffers worth
+        draining) on a throwaway thread, and carry on if it overruns.
+
+        Returns True if the stream closed cleanly.
+        """
+        done = threading.Event()
+
+        def _close():
+            try:
+                stream.abort()
+            except Exception as e:
+                log(f"  stream.abort() failed ({context}): {e}")
+            try:
+                stream.close()
+            except Exception as e:
+                log(f"  stream.close() failed ({context}): {e}")
+            done.set()
+
+        threading.Thread(target=_close, daemon=True).start()
+        if done.wait(self._STREAM_TEARDOWN_TIMEOUT):
+            return True
+        # The teardown thread is still stuck inside PortAudio. Leave it
+        # there — it's a daemon thread — but remember that the audio
+        # subsystem can't be trusted, so we don't call sd._terminate()
+        # underneath a thread that's still executing PortAudio code.
+        self._audio_subsystem_suspect = True
+        log(f"Audio stream did not close within {self._STREAM_TEARDOWN_TIMEOUT}s "
+            f"({context}) — abandoning it. Microphone may need an app restart.")
+        emit_event("warning", message="Audio device stopped responding — recording abandoned")
+        return False
+
     def start_recording(self):
         self._recording = True
         self._audio_blocks = []
@@ -1281,54 +1458,26 @@ class OpenWhisper:
         ceiling_samples = int(self.sample_rate * ceiling_seconds)
         self._audio_buffer_ceiling = ceiling_samples
 
-        def callback(indata, frames, time_info, status):
-            if not self._recording:
-                return
-            if self._audio_total_samples >= self._audio_buffer_ceiling:
-                # Safety net: max_duration timer should have fired by now.
-                # Stop appending; the existing release/auto-stop flow will
-                # tear the stream down on the next user release or timer.
-                if self._recording:
-                    log(f"Audio buffer ceiling reached "
-                        f"({self._audio_buffer_ceiling / self.sample_rate:.0f}s) — stopping")
-                    self._recording = False
-                return
-            self._audio_blocks.append(indata.copy())
-            self._audio_total_samples += frames
-            self._current_rms = float(np.sqrt(np.mean(indata ** 2)))
-
-        def open_stream():
-            kwargs = {
-                'samplerate': self.sample_rate,
-                'channels': 1,
-                'dtype': 'float32',
-                'callback': callback,
-            }
-            device = self.config.get('input_device')
-            if device:
-                kwargs['device'] = device
-            return sd.InputStream(**kwargs)
-
         try:
             try:
-                self._stream = open_stream()
+                self._stream = self._open_input_stream()
                 self._stream.start()
             except Exception as first_err:
                 # PortAudio's device cache can go stale after sleep/wake or audio
                 # device changes (Bluetooth, headphones, display sleep). Reset
                 # PortAudio and try once more before giving up.
-                log(f"Audio stream failed ({first_err}); resetting PortAudio and retrying...")
-                try:
-                    sd._terminate()
-                    sd._initialize()
-                except Exception as reset_err:
-                    log(f"PortAudio reset failed: {reset_err}")
-                self._stream = open_stream()
+                log(f"Audio stream failed ({first_err}); retrying...")
+                self._reset_portaudio()
+                self._stream = self._open_input_stream()
                 self._stream.start()
             log("Recording...")
             emit_event("state", state="recording")
             self._overlay_send({"cmd": "show", "state": "recording"})
             threading.Thread(target=self._overlay_level_sender, daemon=True).start()
+            # Backup for missed pynput release events — see _key_watchdog.
+            threading.Thread(target=self._key_watchdog, daemon=True).start()
+            # Backup for a device that starts but never delivers audio.
+            threading.Thread(target=self._capture_health_check, daemon=True).start()
 
             # Streaming transcription: spin up worker + watcher when enabled.
             # Disabled in benchmark mode so benchmarks always measure single-pass.
@@ -1343,14 +1492,111 @@ class OpenWhisper:
             if self.config['sound_enabled']:
                 play_sound('start')
             if self.config['max_duration'] > 0:
+                # Cancel any timer left over from a previous recording. A
+                # release that lands while this method is still opening the
+                # stream cancels the *old* timer, so without this the one we
+                # create below outlives its recording and later force-stops
+                # an unrelated dictation mid-sentence.
+                if self._max_duration_timer:
+                    self._max_duration_timer.cancel()
                 self._max_duration_timer = threading.Timer(
                     self.config['max_duration'], self._auto_stop
                 )
                 self._max_duration_timer.start()
         except Exception as e:
             log(f"Error: Failed to start recording: {e}")
+            with self._lock:
+                self._recording = False
+                self._key_held = False
+                self._processing = False
+            self._combo_held.clear()
+            self._overlay_send({"cmd": "hide"})
+            emit_event("error", message=f"Failed to start recording: {e}")
+
+    def _reset_portaudio(self):
+        """Re-initialise PortAudio to clear a stale device cache.
+
+        Skipped when a previous teardown was abandoned: a thread may still
+        be executing inside PortAudio, and terminating the library under it
+        can take the whole process down.
+        """
+        if self._audio_subsystem_suspect:
+            log("  Skipping PortAudio reset — a previous teardown is still stuck")
+            return
+        try:
+            sd._terminate()
+            sd._initialize()
+        except Exception as reset_err:
+            log(f"  PortAudio reset failed: {reset_err}")
+
+    def _capture_health_check(self):
+        """Reopen the stream if the device started but delivers no audio.
+
+        macOS sometimes acknowledges the start and then never runs our IO
+        proc — seen after the rapid open/close cycle of back-to-back
+        dictations. The old behaviour was to record silence for as long as
+        the user spoke and lose the whole dictation, so catch it early
+        while only a fraction of a second has been missed.
+        """
+        time.sleep(self._CAPTURE_HEALTH_DELAY)
+        if not self._recording or not self._key_held:
+            return
+        if self._audio_total_samples > 0:
+            return
+        log(f"No audio {self._CAPTURE_HEALTH_DELAY:.2f}s after start — "
+            f"reopening the input stream")
+        with self._record_lifecycle_lock:
+            if not self._recording or not self._key_held:
+                return
+            if self._audio_total_samples > 0:
+                return  # started flowing while we waited for the lock
+            stale = self._stream
+            self._stream = None
+            if stale is not None:
+                self._teardown_stream(stale, context="dead-device reopen")
+            self._reset_portaudio()
+            try:
+                self._stream = self._open_input_stream()
+                self._stream.start()
+                log("  Input stream reopened.")
+            except Exception as e:
+                # Leave the recording running: release will find no audio
+                # and report it cleanly rather than wedging.
+                log(f"  Input stream reopen failed: {e}")
+                emit_event("warning", message="Microphone unavailable — nothing recorded")
+
+    def force_reset(self, reason):
+        """Last-resort recovery: discard everything and return to ready.
+
+        For when the stop path has stalled somewhere we can't unblock. The
+        current dictation is lost either way; this at least leaves the app
+        usable without restarting it.
+        """
+        log(f"Force reset ({reason}) — discarding in-flight dictation")
+        self._dictation_seq += 1
+        if self._max_duration_timer:
+            self._max_duration_timer.cancel()
+            self._max_duration_timer = None
+        stale = self._stream
+        self._stream = None
+        with self._lock:
             self._recording = False
+            self._key_held = False
             self._processing = False
+        self._combo_held.clear()
+        self._audio_blocks = []
+        self._audio_total_samples = 0
+        if stale is not None:
+            self._teardown_stream(stale, context="force reset")
+        if self._streamer is not None:
+            try:
+                self._streamer.drain()
+            except Exception:
+                pass
+            self._streamer = None
+        self._overlay_send({"cmd": "hide"})
+        log("Ready")
+        emit_event("state", state="ready")
 
     def _streaming_watcher(self):
         """Watch the live audio buffer for silence gaps and feed completed
@@ -1383,22 +1629,37 @@ class OpenWhisper:
             log(f"Streaming chunk {idx}: {chunk.size / self.sample_rate:.1f}s")
 
     def _auto_stop(self):
+        self._max_duration_timer = None
+        if not self._key_held:
+            # Timer outlived its recording (see start_recording) — nothing
+            # to stop, and stopping anything now would cut short whatever
+            # dictation is in progress.
+            log("Max duration timer fired with no recording in progress — ignored")
+            return
         log(f"Max duration reached ({self.config['max_duration']}s) — stopping")
-        if self._key_held:
-            with self._lock:
-                self._key_held = False
-                self._processing = True
-            self._combo_held.clear()
-            threading.Thread(target=self.stop_and_transcribe, daemon=True).start()
+        with self._lock:
+            if not self._key_held:
+                return
+            self._key_held = False
+            self._processing = True
+        self._combo_held.clear()
+        threading.Thread(target=self.stop_and_transcribe, daemon=True).start()
 
     def stop_and_transcribe(self):
+        self._stop_started_at = time.time()
         try:
-            self._do_stop_and_transcribe()
+            # Wait for any in-flight start_recording to finish opening the
+            # stream before we tear it down. on_press dispatches start to a
+            # worker thread (so the listener callback returns fast), so a
+            # quick release can race ahead of stream open without this lock.
+            with self._record_lifecycle_lock:
+                self._do_stop_and_transcribe()
         except Exception as e:
             log(f"Error during transcription: {e}")
             log(traceback.format_exc())
             emit_event("error", message=f"Error during transcription: {e}")
         finally:
+            self._stop_started_at = None
             self._overlay_send({"cmd": "hide"})
             self._processing = False
             log("Ready")
@@ -1406,18 +1667,21 @@ class OpenWhisper:
 
     def _do_stop_and_transcribe(self):
         total_t0 = time.time()
+        seq = self._dictation_seq
 
         # Stop recording
         self._recording = False
         record_duration = time.time() - self._record_start_time if self._record_start_time else 0
 
+        # A leftover timer here would fire mid-way through a later dictation.
+        if self._max_duration_timer:
+            self._max_duration_timer.cancel()
+            self._max_duration_timer = None
+
         if self._stream:
-            try:
-                self._stream.stop()
-                self._stream.close()
-            except Exception as e:
-                log(f"Error closing stream: {e}")
+            stale = self._stream
             self._stream = None
+            self._teardown_stream(stale, context="stop")
 
         def _discard_streamer():
             """Tear down the streamer worker without using its results."""
@@ -1586,6 +1850,13 @@ class OpenWhisper:
         if self.config['sound_enabled']:
             play_sound('done')
 
+        if seq != self._dictation_seq:
+            # This dictation was abandoned (Escape / force reset) while we
+            # were still working. Pasting now would drop text into whatever
+            # the user moved on to.
+            log("Abandoned dictation finished late — not typing")
+            return
+
         # Typing is too brief to be a useful pill state — keep the previous
         # state visible (transcribing/cleaning) right up until the overlay
         # hides in the finally block.
@@ -1607,12 +1878,9 @@ class OpenWhisper:
             self._recording = False
 
         if self._stream:
-            try:
-                self._stream.stop()
-                self._stream.close()
-            except Exception as e:
-                log(f"Error closing stream during cancel: {e}")
+            stale = self._stream
             self._stream = None
+            self._teardown_stream(stale, context="cancel")
 
         if self._streamer is not None:
             try:
@@ -1627,15 +1895,45 @@ class OpenWhisper:
         emit_event("state", state="ready")
 
     def on_press(self, key):
-        if key == keyboard.Key.esc and self._recording and self._key_held:
-            self.cancel_recording()
+        if key == keyboard.Key.esc:
+            # Escape must never do the work on this thread: cancelling
+            # touches the audio device, and a slow call here gets the
+            # keyboard event tap throttled by macOS.
+            if self._recording and self._key_held:
+                threading.Thread(target=self.cancel_recording, daemon=True).start()
+            elif self._processing or self._recording:
+                # The pill is still up but there's nothing to cancel
+                # cleanly, so the stop path is stalled. Only step in once
+                # it's clearly overdue — a legitimate transcription of a
+                # long clip takes a few seconds.
+                started = self._stop_started_at
+                stalled_for = time.time() - started if started else None
+                if stalled_for is None or stalled_for >= self._STALL_ESCAPE_THRESHOLD:
+                    detail = (f"Escape, stalled {stalled_for:.0f}s"
+                              if stalled_for is not None else "Escape")
+                    threading.Thread(target=self.force_reset, args=(detail,),
+                                     daemon=True).start()
             return
         if key in self._trigger_keys:
             self._combo_held.add(key)
             if self._combo_held >= self._trigger_keys and not self._key_held and not self._processing:
                 with self._lock:
+                    if self._key_held or self._processing:
+                        return
                     self._key_held = True
-                    self.start_recording()
+                # Run start_recording on a worker thread so this callback
+                # returns immediately. If we block here, macOS throttles
+                # the keyboard event tap and subsequent key release events
+                # get dropped — which is why recording sometimes wouldn't
+                # stop on release.
+                threading.Thread(target=self._start_recording_worker, daemon=True).start()
+
+    def _start_recording_worker(self):
+        with self._record_lifecycle_lock:
+            if not self._key_held:
+                # User released before we got the lock; nothing to start.
+                return
+            self.start_recording()
 
     def on_release(self, key):
         if key in self._trigger_keys:
@@ -1656,11 +1954,9 @@ class OpenWhisper:
         self._shutdown.set()
         self._stop_overlay()
         if self._stream:
-            try:
-                self._stream.stop()
-                self._stream.close()
-            except Exception:
-                pass
+            stale = self._stream
+            self._stream = None
+            self._teardown_stream(stale, context="shutdown")
         if self._listener:
             self._listener.stop()
 

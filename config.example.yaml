@@ -14,6 +14,7 @@ advanced:
   trim_silence_enabled: true
   cleanup_skip_heuristic_enabled: true
   benchmark_mode: false
+  ax_typing_enabled: true
 api_model: claude-haiku-4-5-20251001
 api_input_price_per_mtok: 1.0
 api_output_price_per_mtok: 5.0
