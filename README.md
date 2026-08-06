@@ -118,6 +118,7 @@ advanced:
   streaming_transcribe_enabled: false
   fast_typing_enabled: true
   fast_typing_max_chars: 80
+  clipboard_restore_delay: 1.5
 ```
 
 | Setting | Default | Description |
@@ -128,6 +129,7 @@ advanced:
 | `advanced.streaming_transcribe_enabled` | `false` | Transcribes audio in chunks at silence gaps to reduce post-release latency |
 | `advanced.fast_typing_enabled` | `true` | Inject short transcripts via Quartz unicode events instead of clipboard paste |
 | `advanced.fast_typing_max_chars` | `80` | Length threshold for the unicode-event typing path |
+| `advanced.clipboard_restore_delay` | `1.5` | Seconds the dictation stays on the clipboard after a paste before your previous clipboard is restored. Raise it if a slow app still pastes your old clipboard; set `0` to never restore (the dictation just stays on the clipboard) |
 
 ## Floating Overlay (Liquid Glass)
 

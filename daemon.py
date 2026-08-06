@@ -277,6 +277,8 @@ def _set_clipboard_text(text):
     silently leave the clipboard with whatever was previously there, which
     means Cmd+V then pastes the wrong content. Read back to verify; fall
     back to pbcopy if the native write didn't stick.
+
+    Returns True if the clipboard now holds `text`.
     """
     try:
         from AppKit import NSPasteboard, NSPasteboardTypeString
@@ -286,7 +288,7 @@ def _set_clipboard_text(text):
         if ok:
             written = pb.stringForType_(NSPasteboardTypeString) or ""
             if written == text:
-                return
+                return True
         # Native write didn't take — fall through to pbcopy.
     except Exception:
         pass
@@ -294,6 +296,27 @@ def _set_clipboard_text(text):
         subprocess.run(['pbcopy'], input=text.encode('utf-8'), check=False, timeout=2)
     except (OSError, subprocess.TimeoutExpired) as e:
         log(f"Clipboard write failed: {e}")
+        return False
+    # pbcopy exits 0 even when the pasteboard server refused the write, so
+    # confirm by reading back rather than trusting the exit status.
+    return _get_clipboard_text() == text
+
+
+def _set_clipboard_text_verified(text, attempts=3, gap=0.08):
+    """Put `text` on the clipboard, retrying a busy pasteboard server.
+
+    Returns True only when the clipboard is confirmed to hold `text`. The
+    caller must not send Cmd+V otherwise: the clipboard would still hold the
+    user's previous content and the paste would insert that instead of the
+    dictation.
+    """
+    for attempt in range(1, attempts + 1):
+        if _set_clipboard_text(text):
+            if attempt > 1:
+                log(f"  Clipboard write took {attempt} attempts")
+            return True
+        time.sleep(gap)
+    return False
 
 
 def trim_silence(audio, sample_rate):
@@ -673,6 +696,7 @@ def load_config(config_path):
         'benchmark_mode':          advanced_cfg.get('benchmark_mode', cfg.get('benchmark_mode', False)),
         'fast_typing_enabled':     advanced_cfg.get('fast_typing_enabled', True),
         'fast_typing_max_chars':   advanced_cfg.get('fast_typing_max_chars', 80),
+        'clipboard_restore_delay': advanced_cfg.get('clipboard_restore_delay', 1.5),
         'streaming_transcribe_enabled': advanced_cfg.get('streaming_transcribe_enabled', False),
         'vocabulary':              cfg.get('vocabulary', []) or [],
         'phonetic_corrections':    cfg.get('phonetic_corrections', {}) or {},
@@ -1127,16 +1151,24 @@ class OpenWhisper:
             CGEventKeyboardSetUnicodeString(event_up, len(chunk), chunk)
             CGEventPost(kCGHIDEventTap, event_up)
 
-    def type_at_cursor(self, text):
-        log("Typing...")
+    # How long the dictation stays on the clipboard before the user's previous
+    # content is put back. The paste is asynchronous from our point of view: we
+    # synthesise Cmd+V, and the focused app reads the pasteboard whenever it
+    # gets round to processing that key event. Restore too early and a busy app
+    # (browser, Electron, IDE) reads *after* the restore and pastes the user's
+    # old clipboard instead of the dictation.
+    _CLIPBOARD_RESTORE_DELAY = 1.5
 
+    def type_at_cursor(self, text):
         if (self.config.get('fast_typing_enabled', True)
                 and len(text) <= self.config.get('fast_typing_max_chars', 80)):
             # Short text path: direct unicode injection, no clipboard, no sleeps
+            log(f"Typing... ({len(text)} chars, unicode events)")
             self._type_unicode(text)
             return
 
         # Long text path: clipboard paste with async restore
+        log(f"Typing... ({len(text)} chars, clipboard paste)")
         from pynput.keyboard import Controller, Key
         kb = Controller()
 
@@ -1145,8 +1177,23 @@ class OpenWhisper:
             my_seq = self._typing_seq
 
         old_clipboard = _get_clipboard_text()
-        _set_clipboard_text(text)
+        if not _set_clipboard_text_verified(text):
+            # Never send Cmd+V here: the clipboard still holds the user's
+            # previous content, so pasting would insert the wrong text and
+            # look like the dictation was lost.
+            log("Clipboard write refused — not pasting. Text is in the menu "
+                "under Recent Transcripts.")
+            emit_event("warning", message="Clipboard unavailable — text kept in Recent Transcripts")
+            return
         time.sleep(self.config['release_delay'])
+
+        # Last check before the keystroke: if anything overwrote the clipboard
+        # in the meantime, pasting now would insert that instead.
+        if _get_clipboard_text() != text:
+            log("Clipboard changed before paste — not pasting. Text is in the "
+                "menu under Recent Transcripts.")
+            emit_event("warning", message="Clipboard was overwritten — text kept in Recent Transcripts")
+            return
 
         # Use pynput to send Cmd+V (same accessibility grant as the listener)
         kb.press(Key.cmd)
@@ -1155,13 +1202,21 @@ class OpenWhisper:
         kb.release(Key.cmd)
 
         # Restore the original clipboard in the background so we return
-        # immediately. Skip the write if a newer typing has started, so the
-        # stale restore doesn't clobber the latest clipboard content.
+        # immediately.
         def _restore():
-            time.sleep(0.15)
+            delay = self.config.get('clipboard_restore_delay',
+                                    self._CLIPBOARD_RESTORE_DELAY)
+            if delay <= 0:
+                return  # user opted out; the dictation stays on the clipboard
+            time.sleep(delay)
             with self._typing_seq_lock:
                 if self._typing_seq != my_seq:
-                    return
+                    return  # a newer dictation owns the clipboard now
+            # Only put the old content back if our dictation is still there.
+            # Anything else means the user (or another app) copied something
+            # during the wait, and restoring would clobber it.
+            if _get_clipboard_text() != text:
+                return
             _set_clipboard_text(old_clipboard)
         threading.Thread(target=_restore, daemon=True).start()
 

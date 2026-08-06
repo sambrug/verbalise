@@ -15,6 +15,12 @@ advanced:
   cleanup_skip_heuristic_enabled: true
   benchmark_mode: false
   ax_typing_enabled: true
+  # Seconds the dictation stays on the clipboard after the paste, before your
+  # previous clipboard contents are put back. The focused app reads the
+  # pasteboard whenever it processes our Cmd+V, so restoring too early makes a
+  # busy app paste your old clipboard instead of the dictation. Set 0 to never
+  # restore, leaving the dictation on the clipboard.
+  clipboard_restore_delay: 1.5
 api_model: claude-haiku-4-5-20251001
 api_input_price_per_mtok: 1.0
 api_output_price_per_mtok: 5.0

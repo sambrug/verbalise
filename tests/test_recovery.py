@@ -230,6 +230,129 @@ check("normal path: ends hidden and ready",
       d8.overlay_msgs[-1] == {"cmd": "hide"} and d8._processing is False)
 check("normal path: no false wedge flag", d8._audio_subsystem_suspect is False)
 
+# --- Clipboard paste path: never paste the user's old clipboard ------------
+#
+# The long-text path puts the dictation on the clipboard, sends Cmd+V, then
+# restores what was there before. Two ways that used to insert the wrong text:
+# a pasteboard write that silently didn't take, and restoring before the
+# focused app had read the pasteboard.
+
+class FakeClipboard:
+    """Stands in for the macOS pasteboard, with a refusal mode."""
+
+    def __init__(self, initial="PREVIOUS CLIPBOARD", refuse_writes=False):
+        self.value = initial
+        self.refuse_writes = refuse_writes
+        self.writes = []
+
+    def install(self):
+        ow._get_clipboard_text = lambda: self.value
+        ow._set_clipboard_text = self._set
+        return self
+
+    def _set(self, text):
+        if self.refuse_writes:
+            return False        # pasteboard server busy
+        self.value = text
+        self.writes.append(text)
+        return True
+
+
+class FakeKeyboard:
+    """Captures Cmd+V instead of sending it to whatever app has focus."""
+
+    sent = []
+
+    def __init__(self):
+        pass
+
+    def press(self, key):
+        FakeKeyboard.sent.append(('press', str(key)))
+
+    def release(self, key):
+        FakeKeyboard.sent.append(('release', str(key)))
+
+
+import pynput.keyboard  # noqa: E402
+pynput.keyboard.Controller = FakeKeyboard
+
+
+def real_typing(d):
+    """Undo make_daemon's type_at_cursor stub so the real paste path runs."""
+    del d.type_at_cursor
+    return d
+
+LONG = "This is a long dictation, well over the fast-typing threshold, so it takes the clipboard path."
+assert len(LONG) > 80
+
+# A pasteboard that refuses our write must not lead to a paste at all.
+d9 = real_typing(make_daemon())
+clip = FakeClipboard(refuse_writes=True).install()
+FakeKeyboard.sent = []
+d9.type_at_cursor(LONG)
+check("clipboard refused: no paste sent", FakeKeyboard.sent == [],
+      f"sent={FakeKeyboard.sent}")
+check("clipboard refused: user's clipboard untouched", clip.value == "PREVIOUS CLIPBOARD")
+
+# Something overwriting the clipboard between our write and the keystroke.
+d10 = real_typing(make_daemon())
+d10.config['release_delay'] = 0.05
+clip = FakeClipboard().install()
+FakeKeyboard.sent = []
+real_get = ow._get_clipboard_text
+
+
+def _get_then_hijack():
+    # First read is the "what was there before" read; the check just before
+    # the keystroke then sees someone else's content.
+    ow._get_clipboard_text = lambda: "SOMETHING ELSE COPIED"
+    return "PREVIOUS CLIPBOARD"
+
+
+ow._get_clipboard_text = _get_then_hijack
+d10.type_at_cursor(LONG)
+check("clipboard hijacked before paste: no paste sent", FakeKeyboard.sent == [],
+      f"sent={FakeKeyboard.sent}")
+
+# The happy path: paste is sent, and the old clipboard comes back afterwards.
+d11 = real_typing(make_daemon())
+d11.config['release_delay'] = 0.0
+d11.config['clipboard_restore_delay'] = 0.2
+clip = FakeClipboard().install()
+FakeKeyboard.sent = []
+d11.type_at_cursor(LONG)
+check("normal paste: Cmd+V sent", [k for _, k in FakeKeyboard.sent if 'v' in k.lower()] != [])
+check("normal paste: dictation was on the clipboard at paste time",
+      clip.writes[0] == LONG, f"first write={clip.writes[:1]}")
+check("normal paste: dictation still on clipboard immediately after",
+      clip.value == LONG)
+time.sleep(0.5)
+check("normal paste: previous clipboard restored after the delay",
+      clip.value == "PREVIOUS CLIPBOARD", f"value={clip.value!r}")
+
+# A user copy during the restore window must survive.
+d12 = real_typing(make_daemon())
+d12.config['release_delay'] = 0.0
+d12.config['clipboard_restore_delay'] = 0.3
+clip = FakeClipboard().install()
+FakeKeyboard.sent = []
+d12.type_at_cursor(LONG)
+clip.value = "USER COPIED THIS WHILE WAITING"
+time.sleep(0.6)
+check("user copy during restore window: not clobbered",
+      clip.value == "USER COPIED THIS WHILE WAITING", f"value={clip.value!r}")
+
+# Short text never touches the clipboard at all.
+d13 = real_typing(make_daemon())
+clip = FakeClipboard().install()
+typed_unicode = []
+d13._type_unicode = lambda t: typed_unicode.append(t)
+d13.type_at_cursor("short one")
+check("short text: unicode path, clipboard untouched",
+      typed_unicode == ["short one"] and clip.writes == [])
+
+ow._get_clipboard_text = real_get
+
 print()
 failed = [r for r in results if not r[1]]
 print(f"{len(results) - len(failed)}/{len(results)} passed")
