@@ -78,13 +78,3 @@ def bundle_resources_dir() -> Path:
     # Source mode — paths.py lives at the project root next to menubar.py
     # / daemon.py, so the project dir is just our own parent.
     return Path(__file__).resolve().parent
-
-
-def project_dir_legacy() -> Path:
-    """Return the project directory regardless of bundled vs source mode.
-
-    Used only by the first-run state-file migration to spot config /
-    transcript files left behind by older source-run installs of the
-    app. Don't use this for new code paths — prefer `state_dir()`.
-    """
-    return Path(__file__).resolve().parent

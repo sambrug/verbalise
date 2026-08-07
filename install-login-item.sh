@@ -1,11 +1,15 @@
 #!/bin/bash
-# Add Open Whisper.app as a macOS Login Item.
+# Register the installed Open Whisper.app as a macOS Login Item.
+# Looks in /Applications first, then ~/Applications.
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP_PATH="$SCRIPT_DIR/Open Whisper.app"
+APP_PATH="/Applications/Open Whisper.app"
+if [ ! -d "$APP_PATH" ]; then
+    APP_PATH="$HOME/Applications/Open Whisper.app"
+fi
 
 if [ ! -d "$APP_PATH" ]; then
-    echo "App not found: $APP_PATH"
+    echo "App not found in /Applications or ~/Applications."
+    echo "Build and install it first:  make app && make install"
     exit 1
 fi
 
@@ -15,11 +19,11 @@ tell application \"System Events\"
         delete login item \"OpenWhisper\"
     end try
     try
-        delete login item \"HomeWhisper\"
+        delete login item \"Open Whisper\"
     end try
-    make login item at end with properties {path:\"$APP_PATH\", name:\"OpenWhisper\", hidden:true}
+    make login item at end with properties {path:\"$APP_PATH\", name:\"Open Whisper\", hidden:true}
 end tell
 "
 
-echo "Added to Login Items. Open Whisper will start automatically on login."
-echo "To remove: System Settings > General > Login Items > remove OpenWhisper"
+echo "Added to Login Items: $APP_PATH"
+echo "To remove: System Settings > General > Login Items"

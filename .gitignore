@@ -2,25 +2,16 @@
 __pycache__/
 *.pyc
 .DS_Store
-config.yaml
 *.lock
-daemon.log
-daemon.log.1
-.api-usage.json
-.recent-transcripts.json
+
+# Compiled overlay binary (built by setup.sh / build_app.sh)
 overlay
-Open Whisper.app/
 
 # py2app build outputs
 build/
 dist/
 *.egg-info/
 
-# Local dev / build artifacts
+# Local dev artifacts
 .claude/
-audit.log
 .playwright-mcp/
-benchmark-chart.html
-benchmark-charts.png
-open-whisper.zip
-open_whisper_icon.png

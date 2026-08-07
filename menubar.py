@@ -42,7 +42,7 @@ from AppKit import (
     NSViewWidthSizable,
     NSEventModifierFlagCommand, NSEventModifierFlagShift,
     NSPanel, NSWindowStyleMaskTitled, NSWindowStyleMaskClosable,
-    NSBackingStoreBuffered, NSTextField, NSSecureTextField, NSButton,
+    NSBackingStoreBuffered, NSTextField, NSButton,
     NSFont, NSColor, NSBezelStyleRounded,
 )
 from Foundation import (
@@ -119,10 +119,6 @@ class _DialogTarget(NSObject):
             handler()
 
 
-# Backwards-compat alias (older docstrings/tests may reference the
-# original name; the class itself is general now).
-_TextEditorDialogTarget = _DialogTarget
-
 # Hide Python from the Dock - Accessory policy allows menu bar but no Dock icon
 def _hide_from_dock():
     app = NSApplication.sharedApplication()
@@ -158,22 +154,15 @@ def _release_lock(lock_fd):
 
 CONFIG_PATH = paths.state_dir() / 'config.yaml'
 DAEMON_SCRIPT = paths.bundle_resources_dir() / 'daemon.py'
-USAGE_FILE = paths.state_dir() / 'api-usage.json'
+# Lifetime word/recording counters. Keeps its historical filename so
+# existing stats survive the removal of API usage tracking.
+STATS_FILE = paths.state_dir() / 'api-usage.json'
 
 # In source mode use the project's .venv (so the daemon subprocess sees the
 # venv-installed packages). In a bundled .app there's no .venv — sys.executable
 # is the bundled Python, which already has everything py2app put alongside it.
-_DEV_VENV_PYTHON = paths.project_dir_legacy() / '.venv' / 'bin' / 'python3'
+_DEV_VENV_PYTHON = Path(__file__).resolve().parent / '.venv' / 'bin' / 'python3'
 PYTHON = str(_DEV_VENV_PYTHON) if _DEV_VENV_PYTHON.exists() else sys.executable
-
-CLEANUP_OPTIONS = {
-    'off':         'Off',
-    'low':         'qwen2.5:1.5b',
-    'medium':      'phi4-mini',
-    'high':        'gemma3:4b',
-    'api_haiku':   'API: Claude Haiku 4.5',
-    'api_sonnet':  'API: Claude Sonnet 4.5',
-}
 
 TRANSCRIPTION_MODELS = {
     'tiny':            'Whisper Tiny',
@@ -186,7 +175,7 @@ TRANSCRIPTION_MODELS = {
     'large':           'Whisper Large',
 }
 
-# Presets only change the transcription model. Cleanup is configured separately.
+# Presets are shortcuts for the transcription model choice.
 PRESETS = {
     'fast':     {'label': 'Fast (distil-medium)',     'transcription_model': 'distil-medium'},
     'balanced': {'label': 'Balanced (turbo)',          'transcription_model': 'turbo'},
@@ -246,10 +235,8 @@ STATUS_LABELS = {
     'ready':        'Ready',
     'recording':    'Recording…',
     'transcribing': 'Transcribing…',
-    'cleaning':     'Cleaning up…',
     'loading':      'Starting up…',
     'error':        'Error — check logs',
-    'benchmarking': 'Benchmarking…',
 }
 
 
@@ -270,13 +257,13 @@ def load_menubar_icon():
     return image
 
 
-def load_api_usage():
-    """Load lifetime API usage stats."""
+def load_stats():
+    """Load lifetime dictation stats (total words / recordings)."""
     try:
-        with open(USAGE_FILE) as f:
+        with open(STATS_FILE) as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return {'input_tokens': 0, 'output_tokens': 0, 'cost': 0.0, 'requests': 0}
+        return {'total_words': 0, 'total_recordings': 0}
 
 
 RECENT_TRANSCRIPTS_FILE = paths.state_dir() / 'recent-transcripts.json'
@@ -406,7 +393,7 @@ def show_text_editor_dialog(message, informative, default_text,
         result['text'] = None
         app.stopModal()
 
-    target = _TextEditorDialogTarget.alloc().init()
+    target = _DialogTarget.alloc().init()
     target._save_handler = _save
     target._cancel_handler = _cancel
 
@@ -513,7 +500,7 @@ def show_confirm_dialog(message, informative, ok="OK", cancel="Cancel"):
         result['ok'] = False
         app.stopModal()
 
-    target = _TextEditorDialogTarget.alloc().init()
+    target = _DialogTarget.alloc().init()
     target._save_handler = _ok
     target._cancel_handler = _cancel
 
@@ -552,122 +539,6 @@ def show_confirm_dialog(message, informative, ok="OK", cancel="Cancel"):
     return result['ok']
 
 
-def show_input_dialog(message, informative, default_text="",
-                      ok="Save", cancel="Cancel",
-                      width=360, secure=False):
-    """Single-line input dialog (replacement for `rumps.Window`).
-
-    Returns the entered string on OK, or None on Cancel. When `secure`
-    is True the field masks input — used for the API-key entry. Same
-    no-icon NSPanel approach as the other dialogs in this module.
-    """
-    pad_x = 20
-    pad_top = 22
-    pad_bottom = 16
-    gap = 10
-    win_width = max(width + pad_x * 2, 420)
-    text_area_width = win_width - pad_x * 2
-
-    # See note in show_text_editor_dialog: sizeToFit, not fittingSize,
-    # honours preferredMaxLayoutWidth and prevents bottom-line clipping.
-    info_label = NSTextField.wrappingLabelWithString_(informative)
-    info_label.setFont_(NSFont.systemFontOfSize_(11))
-    info_label.setTextColor_(NSColor.secondaryLabelColor())
-    info_label.setPreferredMaxLayoutWidth_(text_area_width)
-    info_label.sizeToFit()
-    info_height = info_label.frame().size.height
-
-    heading_height = 18
-    field_height = 22
-    btn_height = 32
-    win_height = (pad_top + heading_height + gap + info_height
-                  + gap + field_height + gap + btn_height + pad_bottom)
-
-    panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
-        NSMakeRect(0, 0, win_width, win_height),
-        NSWindowStyleMaskTitled | NSWindowStyleMaskClosable,
-        NSBackingStoreBuffered,
-        False,
-    )
-    panel.setReleasedWhenClosed_(False)
-    panel.setTitle_(message)
-
-    content = panel.contentView()
-    y = win_height - pad_top
-
-    heading = NSTextField.labelWithString_(message)
-    heading.setFont_(NSFont.boldSystemFontOfSize_(13))
-    heading.setFrame_(NSMakeRect(pad_x, y - heading_height, text_area_width, heading_height))
-    content.addSubview_(heading)
-    y -= heading_height + gap
-
-    info_label.setFrame_(NSMakeRect(pad_x, y - info_height, text_area_width, info_height))
-    content.addSubview_(info_label)
-    y -= info_height + gap
-
-    field_cls = NSSecureTextField if secure else NSTextField
-    field = field_cls.alloc().initWithFrame_(
-        NSMakeRect(pad_x, y - field_height, text_area_width, field_height)
-    )
-    field.setStringValue_(default_text or "")
-    content.addSubview_(field)
-
-    btn_w = 90
-    btn_y = pad_bottom
-    ok_x = win_width - pad_x - btn_w
-    cancel_x = ok_x - 8 - btn_w
-
-    result = {'text': None}
-    app = NSApplication.sharedApplication()
-
-    def _ok():
-        result['text'] = str(field.stringValue())
-        app.stopModal()
-
-    def _cancel():
-        result['text'] = None
-        app.stopModal()
-
-    target = _TextEditorDialogTarget.alloc().init()
-    target._save_handler = _ok
-    target._cancel_handler = _cancel
-
-    cancel_btn = NSButton.alloc().initWithFrame_(
-        NSMakeRect(cancel_x, btn_y, btn_w, btn_height)
-    )
-    cancel_btn.setTitle_(cancel)
-    cancel_btn.setBezelStyle_(NSBezelStyleRounded)
-    cancel_btn.setKeyEquivalent_("\x1b")
-    cancel_btn.setTarget_(target)
-    cancel_btn.setAction_("cancel:")
-    content.addSubview_(cancel_btn)
-
-    ok_btn = NSButton.alloc().initWithFrame_(
-        NSMakeRect(ok_x, btn_y, btn_w, btn_height)
-    )
-    ok_btn.setTitle_(ok)
-    ok_btn.setBezelStyle_(NSBezelStyleRounded)
-    ok_btn.setKeyEquivalent_("\r")
-    ok_btn.setTarget_(target)
-    ok_btn.setAction_("save:")
-    content.addSubview_(ok_btn)
-
-    panel.setInitialFirstResponder_(field)
-    panel.setDelegate_(target)
-    panel.center()
-    panel.makeKeyAndOrderFront_(None)
-    try:
-        app.runModalForWindow_(panel)
-    finally:
-        # Always run cleanup, even if a callback raised. Without this a
-        # stray exception inside the modal loop could leave the app frozen
-        # behind an invisible window.
-        panel.setDelegate_(None)
-        panel.orderOut_(None)
-
-    return result['text']
-
-
 def list_input_devices():
     """Return list of (display_name, device_name) for available input devices.
     Skips devices without input channels.
@@ -687,16 +558,6 @@ def list_input_devices():
         seen.add(name)
         result.append((name, name))
     return result
-
-
-def format_api_usage(usage):
-    """Format usage stats for menu display."""
-    tokens = usage['input_tokens'] + usage['output_tokens']
-    if tokens == 0:
-        return "API Usage: none yet"
-    cost = usage['cost']
-    reqs = usage['requests']
-    return f"API Usage: {tokens:,} tokens, ${cost:.4f} ({reqs} requests)"
 
 
 def format_stats(usage):
@@ -745,7 +606,6 @@ class OpenWhisperMenuBar(rumps.App):
         # dropdown status text shows this string instead of whatever
         # transient update most recently fired.
         self._persistent_alert = None
-        self._saw_structured_events = False
         self._log_file = None
         self._daemon_exit_lock = threading.Lock()
         # --- Daemon supervisor state ---
@@ -761,23 +621,12 @@ class OpenWhisperMenuBar(rumps.App):
         self._daemon_started_at = 0.0  # time.time() of last start_daemon call
 
         cfg = load_config()
-        cleanup_quality = cfg.get('cleanup_quality', 'low')
-        cleanup_enabled = cfg.get('cleanup_enabled', False)
-        api_model = cfg.get('api_model', 'claude-haiku-4-5-20251001')
         transcription_model = cfg.get('transcription_model', 'turbo')
         trigger_key = cfg.get('trigger_key', 'shift_r')
         self._trigger_key = trigger_key  # for dynamic 'ready' status
-        if not cleanup_enabled:
-            current_cleanup = 'off'
-        elif cleanup_quality == 'api':
-            current_cleanup = 'api_sonnet' if 'sonnet' in api_model.lower() else 'api_haiku'
-        else:
-            current_cleanup = cleanup_quality
         advanced_cfg = cfg.get('advanced', {}) if isinstance(cfg.get('advanced', {}), dict) else {}
-        benchmark_mode = bool(advanced_cfg.get('benchmark_mode', False))
-        streaming_enabled = bool(advanced_cfg.get('streaming_transcribe_enabled', False))
+        streaming_enabled = bool(advanced_cfg.get('streaming_transcribe_enabled', True))
         fast_typing_enabled = bool(advanced_cfg.get('fast_typing_enabled', True))
-        ax_typing_enabled = bool(advanced_cfg.get('ax_typing_enabled', True))
         sound_enabled = bool(cfg.get('sound_enabled', False))
         overlay_enabled = bool(cfg.get('overlay_enabled', True))
         overlay_translucent = bool(cfg.get('overlay_translucent', True))
@@ -838,23 +687,6 @@ class OpenWhisperMenuBar(rumps.App):
             transcription_menu.add(item)
         advanced_menu.add(transcription_menu)
 
-        # Cleanup submenu — title shows what's currently selected.
-        self.cleanup_items = {}
-        cleanup_menu = rumps.MenuItem(f"Cleanup — {CLEANUP_OPTIONS.get(current_cleanup, current_cleanup)}")
-        self.cleanup_menu = cleanup_menu
-        for key, label in CLEANUP_OPTIONS.items():
-            if key == 'api_haiku':
-                cleanup_menu.add(None)  # separator between local and API
-            item = rumps.MenuItem(label, callback=self.set_cleanup)
-            item._cleanup_key = key
-            if key == current_cleanup:
-                item.state = 1
-            self.cleanup_items[key] = item
-            cleanup_menu.add(item)
-        cleanup_menu.add(None)  # separator before Set API Key…
-        cleanup_menu.add(rumps.MenuItem("Set API Key…", callback=self.set_api_key))
-        advanced_menu.add(cleanup_menu)
-
         # Input device submenu — title shows the active device.
         self.input_device_items = {}
         current_device = cfg.get('input_device')
@@ -903,10 +735,6 @@ class OpenWhisperMenuBar(rumps.App):
         self.fast_typing_item.state = 1 if fast_typing_enabled else 0
         advanced_menu.add(self.fast_typing_item)
 
-        self.ax_typing_item = rumps.MenuItem("AX Typing", callback=self.toggle_ax_typing)
-        self.ax_typing_item.state = 1 if ax_typing_enabled else 0
-        advanced_menu.add(self.ax_typing_item)
-
         self.sound_item = rumps.MenuItem("Sound Feedback", callback=self.toggle_sound)
         self.sound_item.state = 1 if sound_enabled else 0
         advanced_menu.add(self.sound_item)
@@ -921,19 +749,11 @@ class OpenWhisperMenuBar(rumps.App):
         self.overlay_translucent_item.state = 1 if overlay_translucent else 0
         advanced_menu.add(self.overlay_translucent_item)
 
-        self.benchmark_mode_item = rumps.MenuItem("Benchmark Mode", callback=self.toggle_benchmark_mode)
-        self.benchmark_mode_item.state = 1 if benchmark_mode else 0
-        advanced_menu.add(self.benchmark_mode_item)
-
         advanced_menu.add(None)  # separator
 
-        self.stats_item = rumps.MenuItem(format_stats(load_api_usage()))
+        self.stats_item = rumps.MenuItem(format_stats(load_stats()))
         self.stats_item.set_callback(None)
         advanced_menu.add(self.stats_item)
-
-        self.api_usage_item = rumps.MenuItem(format_api_usage(load_api_usage()))
-        self.api_usage_item.set_callback(None)
-        advanced_menu.add(self.api_usage_item)
 
         advanced_menu.add(None)  # separator
 
@@ -1000,9 +820,8 @@ class OpenWhisperMenuBar(rumps.App):
                 # the file just before emitting last_text).
                 self._recent_transcripts = load_recent_transcripts()
                 self._rebuild_recent_transcripts_menu()
-            elif action == 'api_usage':
-                usage = update.get('usage') or load_api_usage()
-                self.api_usage_item.title = format_api_usage(usage)
+            elif action == 'stats':
+                usage = update.get('usage') or load_stats()
                 self.stats_item.title = format_stats(usage)
 
     def _rebuild_recent_transcripts_menu(self):
@@ -1246,7 +1065,6 @@ class OpenWhisperMenuBar(rumps.App):
         cmd = [PYTHON, str(DAEMON_SCRIPT)]
 
         self._open_log_file()
-        self._saw_structured_events = False
         self._daemon_started_at = time.time()
 
         # Force UTF-8 on both ends. Inside a py2app bundle, locale env vars
@@ -1274,58 +1092,19 @@ class OpenWhisperMenuBar(rumps.App):
         threading.Thread(target=self._watch_events, daemon=True).start()
 
     def _watch_stderr(self):
-        """Watch daemon stderr, logging and parsing as fallback."""
+        """Mirror daemon stderr to our stderr and the log file.
+
+        Status parsing happens in _watch_events via the daemon's structured
+        JSON events — stderr is kept purely as the human-readable log.
+        """
         if not self.daemon_proc:
             return
         for line in self.daemon_proc.stderr:
             line = line.strip()
             print(line, file=sys.stderr, flush=True)
-            # Also write to log file for debugging
             if self._log_file:
                 self._log_file.write(line + '\n')
                 self._log_file.flush()
-
-            # Fallback parser for older daemon versions that don't emit JSON events.
-            if self._saw_structured_events:
-                continue
-
-            if "Ready!" in line or line.split("] ", 1)[-1].strip() == "Ready":
-                self._clear_persistent_alert()
-                self._queue_status(self._ready_label())
-            elif "Importing MLX" in line or "Loading Whisper" in line:
-                self._queue_status("Loading speech model…")
-            elif "Accessibility permission" in line:
-                self._set_persistent_alert("Needs Accessibility permission — open System Settings")
-            elif "No microphone" in line or "Microphone check" in line:
-                self._set_persistent_alert("No microphone found — check input device")
-            elif "Recording..." in line:
-                self._queue_status(STATUS_LABELS['recording'])
-            elif "Transcribing" in line:
-                self._queue_status(STATUS_LABELS['transcribing'])
-            elif "Cleaning up" in line:
-                self._queue_status(STATUS_LABELS['cleaning'])
-            elif line.endswith("Ready"):
-                self._queue_status(self._ready_label())
-            elif "Clean (" in line:
-                text = line.split("): ", 1)[-1].strip()
-                self._queue_last_text(text)
-            elif "Raw (" in line and "Clean (" not in line:
-                # Only use raw if cleanup is off (clean will override)
-                text = line.split("): ", 1)[-1].strip()
-                self._queue_last_text(text)
-            elif "API usage:" in line:
-                self._status_queue.put({'action': 'api_usage', 'usage': load_api_usage()})
-            elif "Cleanup failed" in line:
-                self._queue_status("Cleanup failed — using raw transcription")
-            elif "Warning:" in line and "anthropic_api_key" in line:
-                self._queue_status("API key missing — cleanup disabled")
-            elif "Too short" in line or "Too quiet" in line or "Hallucination" in line:
-                self._queue_status(self._ready_label())
-            elif "Error" in line or "Failed" in line:
-                self._queue_status(STATUS_LABELS['error'])
-            elif "Config error" in line:
-                error_detail = line.split("Config error:", 1)[-1].strip() if "Config error:" in line else "Check config.yaml"
-                self._queue_status(f"Config error: {error_detail}")
 
         self._handle_daemon_exit()
 
@@ -1342,7 +1121,6 @@ class OpenWhisperMenuBar(rumps.App):
             except json.JSONDecodeError:
                 continue
 
-            self._saw_structured_events = True
             kind = event.get('event')
             if kind == 'state':
                 state = event.get('state')
@@ -1358,11 +1136,11 @@ class OpenWhisperMenuBar(rumps.App):
                 text = event.get('text', '')
                 if text:
                     self._queue_last_text(text)
-            elif kind == 'api_usage':
+            elif kind == 'stats':
                 usage = event.get('usage')
                 if not isinstance(usage, dict):
-                    usage = load_api_usage()
-                self._status_queue.put({'action': 'api_usage', 'usage': usage})
+                    usage = load_stats()
+                self._status_queue.put({'action': 'stats', 'usage': usage})
             elif kind == 'config_error':
                 message = event.get('message', 'Check config.yaml')
                 self._queue_status(f"Config error: {message}")
@@ -1453,65 +1231,6 @@ class OpenWhisperMenuBar(rumps.App):
         self.transcription_menu.title = f"Transcription Model — {TRANSCRIPTION_MODELS.get(model_key, model_key)}"
         threading.Thread(target=self._restart_daemon, daemon=True).start()
 
-    def set_cleanup(self, sender):
-        cleanup_key = sender._cleanup_key
-        cfg = load_config()
-        if cleanup_key == 'off':
-            cfg['cleanup_enabled'] = False
-        else:
-            cfg['cleanup_enabled'] = True
-            if cleanup_key == 'api_haiku':
-                cfg['cleanup_quality'] = 'api'
-                cfg['api_model'] = 'claude-haiku-4-5-20251001'
-            elif cleanup_key == 'api_sonnet':
-                cfg['cleanup_quality'] = 'api'
-                cfg['api_model'] = 'claude-sonnet-4-5-20250929'
-            else:
-                cfg['cleanup_quality'] = cleanup_key
-        save_config(cfg)
-        for key, item in self.cleanup_items.items():
-            item.state = 1 if key == cleanup_key else 0
-        self.cleanup_menu.title = f"Cleanup — {CLEANUP_OPTIONS.get(cleanup_key, cleanup_key)}"
-        threading.Thread(target=self._restart_daemon, daemon=True).start()
-
-    def set_api_key(self, sender):
-        entered = show_input_dialog(
-            message="Set API Key",
-            informative=("Paste your Anthropic API key. Stored in macOS "
-                         "Keychain. Leave blank to remove."),
-            default_text="",
-            ok="Save",
-            cancel="Cancel",
-            width=360,
-            secure=True,
-        )
-        if entered is None:
-            return
-        key = entered.strip()
-        if not key:
-            subprocess.run(
-                ['security', 'delete-generic-password',
-                 '-s', 'open-whisper', '-a', 'anthropic_api_key'],
-                capture_output=True, check=False,
-            )
-            self._queue_status("API key removed.")
-            threading.Thread(target=self._restart_daemon, daemon=True).start()
-            return
-        if not key.startswith('sk-ant-'):
-            self._queue_status("Invalid API key format (expected sk-ant-...).")
-            return
-        result = subprocess.run(
-            ['security', 'add-generic-password',
-             '-s', 'open-whisper', '-a', 'anthropic_api_key',
-             '-w', key, '-U'],
-            capture_output=True, text=True, check=False,
-        )
-        if result.returncode != 0:
-            self._queue_status(f"Failed to save API key: {result.stderr.strip()}")
-            return
-        self._queue_status("API key saved to Keychain.")
-        threading.Thread(target=self._restart_daemon, daemon=True).start()
-
     def set_trigger_key(self, sender):
         trigger_key = sender._trigger_key
         cfg = load_config()
@@ -1521,20 +1240,6 @@ class OpenWhisperMenuBar(rumps.App):
         for key, item in self.trigger_items.items():
             item.state = 1 if key == trigger_key else 0
         self.trigger_menu.title = f"Trigger Key — {TRIGGER_KEYS.get(trigger_key, trigger_key)}"
-        threading.Thread(target=self._restart_daemon, daemon=True).start()
-
-    def _toggle_advanced_flag(self, key, item, label):
-        """Flip cfg['advanced'][key], update the menu item, restart the daemon."""
-        cfg = load_config()
-        advanced = cfg.get('advanced', {})
-        if not isinstance(advanced, dict):
-            advanced = {}
-        new_val = not bool(advanced.get(key, False))
-        advanced[key] = new_val
-        cfg['advanced'] = advanced
-        save_config(cfg)
-        item.state = 1 if new_val else 0
-        self._queue_status(f"{label} {'on' if new_val else 'off'} — restarting daemon…")
         threading.Thread(target=self._restart_daemon, daemon=True).start()
 
     def _toggle_top_flag(self, key, item, label, default=False):
@@ -1547,11 +1252,19 @@ class OpenWhisperMenuBar(rumps.App):
         self._queue_status(f"{label} {'on' if new_val else 'off'} — restarting daemon…")
         threading.Thread(target=self._restart_daemon, daemon=True).start()
 
-    def toggle_benchmark_mode(self, sender):
-        self._toggle_advanced_flag('benchmark_mode', self.benchmark_mode_item, 'Benchmark mode')
-
     def toggle_streaming(self, sender):
-        self._toggle_advanced_flag('streaming_transcribe_enabled', self.streaming_item, 'Streaming transcribe')
+        # Streaming is a default-on flag; absence-of-key means "on".
+        cfg = load_config()
+        advanced = cfg.get('advanced', {})
+        if not isinstance(advanced, dict):
+            advanced = {}
+        new_val = not bool(advanced.get('streaming_transcribe_enabled', True))
+        advanced['streaming_transcribe_enabled'] = new_val
+        cfg['advanced'] = advanced
+        save_config(cfg)
+        self.streaming_item.state = 1 if new_val else 0
+        self._queue_status(f"Streaming transcribe {'on' if new_val else 'off'} — restarting daemon…")
+        threading.Thread(target=self._restart_daemon, daemon=True).start()
 
     def toggle_fast_typing(self, sender):
         # Fast Typing is a default-on flag; we want absence-of-key to mean "on".
@@ -1565,20 +1278,6 @@ class OpenWhisperMenuBar(rumps.App):
         save_config(cfg)
         self.fast_typing_item.state = 1 if new_val else 0
         self._queue_status(f"Fast typing {'on' if new_val else 'off'} — restarting daemon…")
-        threading.Thread(target=self._restart_daemon, daemon=True).start()
-
-    def toggle_ax_typing(self, sender):
-        # AX Typing is a default-on flag; absence-of-key means "on".
-        cfg = load_config()
-        advanced = cfg.get('advanced', {})
-        if not isinstance(advanced, dict):
-            advanced = {}
-        new_val = not bool(advanced.get('ax_typing_enabled', True))
-        advanced['ax_typing_enabled'] = new_val
-        cfg['advanced'] = advanced
-        save_config(cfg)
-        self.ax_typing_item.state = 1 if new_val else 0
-        self._queue_status(f"AX typing {'on' if new_val else 'off'} — restarting daemon…")
         threading.Thread(target=self._restart_daemon, daemon=True).start()
 
     def toggle_sound(self, sender):
@@ -1709,51 +1408,16 @@ class OpenWhisperMenuBar(rumps.App):
 def _bootstrap_state_dir():
     """First-run setup of `state_dir()`. Idempotent.
 
-    Seeds the user's `~/Library/Application Support/Open Whisper/` with
-    config + carried-over runtime state. For each file we migrate, the
-    rule is the same:
-
-      1. If the target already exists in `state_dir()`, leave it alone
-         (idempotent — repeat calls are no-ops).
-      2. Else if a legacy file exists next to the source (an existing
-         dev-mode user who's now migrating), copy it across so they
-         don't lose vocab, recent transcripts, or API usage history.
-      3. Else, for `config.yaml` only, fall back to seeding from the
-         bundled `config.example.yaml`.
-
-    Run once at app start, before the daemon subprocess is spawned (the
-    daemon reads `config.yaml` on launch). Idempotency means we can call
-    this on every start without harm.
+    Seeds `~/Library/Application Support/Open Whisper/config.yaml` from the
+    bundled `config.example.yaml` when missing. Run at every app start,
+    before the daemon subprocess is spawned (the daemon reads config.yaml
+    on launch); a no-op when the config already exists.
     """
-    target = paths.state_dir()
-    legacy = paths.project_dir_legacy()
-
-    # config.yaml — has a fallback to config.example.yaml
-    config_target = target / 'config.yaml'
+    config_target = paths.state_dir() / 'config.yaml'
     if not config_target.exists():
-        config_legacy = legacy / 'config.yaml'
-        if config_legacy.exists() and config_legacy != config_target:
-            shutil.copy2(config_legacy, config_target)
-        else:
-            example = paths.bundle_resources_dir() / 'config.example.yaml'
-            if example.exists():
-                shutil.copy2(example, config_target)
-
-    # Runtime state files — preserve user history if a legacy copy is
-    # there. No fallback (these are valid as missing for a fresh user).
-    # Note the leading-dot rename: legacy files were hidden (`.api-usage.json`)
-    # because they sat in the source dir; in `state_dir()` they don't need
-    # to hide so we use the cleaner name.
-    for legacy_name, target_name in [
-        ('.api-usage.json', 'api-usage.json'),
-        ('.recent-transcripts.json', 'recent-transcripts.json'),
-    ]:
-        t = target / target_name
-        if t.exists():
-            continue
-        src = legacy / legacy_name
-        if src.exists() and src != t:
-            shutil.copy2(src, t)
+        example = paths.bundle_resources_dir() / 'config.example.yaml'
+        if example.exists():
+            shutil.copy2(example, config_target)
 
 
 if __name__ == '__main__':

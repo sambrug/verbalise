@@ -10,7 +10,7 @@ help:
 	@echo "Open Whisper — make targets:"
 	@echo ""
 	@echo "  make test         Run the recording-lifecycle recovery tests"
-	@echo "  make dev-setup    Install Python deps + build overlay+launcher (source-run mode)"
+	@echo "  make dev-setup    Install Python deps + build overlay (source-run mode)"
 	@echo "  make overlay      Recompile the Swift overlay binary only"
 	@echo "  make app          Build a self-contained dist/Open\\ Whisper.app (release)"
 	@echo "  make app-dev      Build dist/Open\\ Whisper.app in alias mode (fast iteration)"

@@ -78,7 +78,7 @@ PLIST = {
 
 OPTIONS = {
     'argv_emulation': False,
-    'iconfile': str(PROJECT_DIR / 'Open Whisper.app' / 'Contents' / 'Resources' / 'AppIcon.icns'),
+    'iconfile': str(PROJECT_DIR / 'assets' / 'AppIcon.icns'),
     'plist': PLIST,
     # Force py2app to vendor these top-level packages whole, including
     # native dylibs / Metal shaders that the modulegraph traversal might
@@ -99,7 +99,6 @@ OPTIONS = {
         'Foundation',
         'certifi',
         'yaml',
-        'PIL',
     ],
     # Single-file modules from this project that py2app should pick up
     # alongside menubar.py.

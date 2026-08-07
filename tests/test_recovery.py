@@ -25,16 +25,14 @@ import numpy as np  # noqa: E402  (after the daemon import, which sets env vars)
 
 # Never touch the user's real stats / recent-transcripts files.
 ow.update_stats_and_recent = lambda text: None
-ow.load_api_usage = lambda: {}
+ow.load_stats = lambda: {}
 
 CONFIG = {
-    'sample_rate': 16000, 'transcription_model': 'turbo', 'cleanup_enabled': False,
-    'cleanup_quality': 'low', 'trigger_key': 'alt_r+shift_r', 'language': 'en',
+    'sample_rate': 16000, 'transcription_model': 'turbo',
+    'trigger_key': 'alt_r+shift_r', 'language': 'en',
     'min_duration': 0.5, 'max_duration': 300, 'release_delay': 0.0,
     'sound_enabled': False, 'overlay_enabled': False, 'vocabulary': [],
-    'input_device': None, 'api_model': 'x', 'api_input_price_per_mtok': 1.0,
-    'api_output_price_per_mtok': 5.0, 'api_cleanup_prompt': '', 'cleanup_prompt': '',
-    'anthropic_api_key': None, 'phonetic_corrections': {},
+    'input_device': None, 'phonetic_corrections': {},
 }
 
 results = []
@@ -352,6 +350,72 @@ check("short text: unicode path, clipboard untouched",
       typed_unicode == ["short one"] and clip.writes == [])
 
 ow._get_clipboard_text = real_get
+
+# --- Streaming transcribe: ordering, failure fallback, quiet-tail skip ------
+
+# Chunks come back in feed order even when transcription finishes out of order.
+slow_first = threading.Event()
+
+
+def _ordered_transcribe(audio):
+    # First chunk waits until the second has been fed, proving order is
+    # restored by index rather than completion time.
+    if not slow_first.is_set():
+        slow_first.set()
+        time.sleep(0.2)
+        return "one"
+    return "two"
+
+
+s = ow.StreamingTranscriber(_ordered_transcribe)
+s.feed(np.zeros(16000, dtype='float32'))
+s.feed(np.zeros(16000, dtype='float32'))
+check("streaming: chunks join in feed order", s.drain() == ["one", "two"])
+check("streaming: no failure flagged", s.failed is False)
+
+# A chunk that raises must flag the streamer as failed, not crash it.
+def _raising_transcribe(audio):
+    raise RuntimeError("model fell over")
+
+
+s2 = ow.StreamingTranscriber(_raising_transcribe)
+s2.feed(np.zeros(16000, dtype='float32'))
+check("streaming: failed chunk flagged", s2.drain() == [""] and s2.failed is True)
+
+# End-to-end: a mid-recording chunk plus the leftover audio both get typed.
+d14 = make_daemon()
+as_if_recording(d14, HealthyStream(), seconds=5.0)
+d14._streamer = ow.StreamingTranscriber(d14.transcribe)
+d14._streamer.feed(np.random.default_rng(1).normal(0, 0.05, 16000).astype('float32'))
+d14._streamer_last_cut = 16000  # first second already streamed
+release(d14)
+d14.stop_and_transcribe()
+check("streaming finalize: chunk + leftover joined",
+      d14.typed == ["hello world hello world"], f"typed={d14.typed}")
+
+# A failed chunk mid-stream falls back to one single-pass transcription.
+d15 = make_daemon()
+as_if_recording(d15, HealthyStream(), seconds=5.0)
+d15._streamer = ow.StreamingTranscriber(_raising_transcribe)
+d15._streamer.feed(np.zeros(16000, dtype='float32'))
+d15._streamer_last_cut = 16000
+release(d15)
+d15.stop_and_transcribe()
+check("streaming failure: falls back to single pass, nothing dropped",
+      d15.typed == ["hello world"], f"typed={d15.typed}")
+
+# A near-silent tail after real chunks is not transcribed on its own.
+d16 = make_daemon()
+as_if_recording(d16, HealthyStream(), seconds=5.0)
+d16._audio_blocks.append(np.zeros((16000, 1), dtype='float32'))  # silent tail
+d16._audio_total_samples += 16000
+d16._streamer = ow.StreamingTranscriber(d16.transcribe)
+d16._streamer.feed(np.random.default_rng(2).normal(0, 0.05, 16000).astype('float32'))
+d16._streamer_last_cut = 16000 * 5  # everything voiced already streamed
+release(d16)
+d16.stop_and_transcribe()
+check("streaming: silent tail skipped, chunk still typed",
+      d16.typed == ["hello world"], f"typed={d16.typed}")
 
 print()
 failed = [r for r in results if not r[1]]
