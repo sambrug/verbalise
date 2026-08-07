@@ -97,6 +97,7 @@ OPTIONS = {
         'objc',
         'AppKit',
         'Foundation',
+        'ServiceManagement',
         'certifi',
         'yaml',
     ],

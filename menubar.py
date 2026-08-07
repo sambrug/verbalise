@@ -175,12 +175,18 @@ TRANSCRIPTION_MODELS = {
     'large':           'Whisper Large',
 }
 
-# Presets are shortcuts for the transcription model choice.
-PRESETS = {
-    'fast':     {'label': 'Fast (distil-medium)',     'transcription_model': 'distil-medium'},
-    'balanced': {'label': 'Balanced (turbo)',          'transcription_model': 'turbo'},
-    'quality':  {'label': 'Quality (distil-large)',    'transcription_model': 'distil-large'},
-}
+# True when running from a built .app bundle rather than source. The
+# Launch at Login toggle registers the running bundle itself, so it only
+# makes sense (and only works) in bundled mode.
+IN_BUNDLE = any(p.suffix == '.app' for p in Path(sys.executable).resolve().parents)
+
+try:
+    from ServiceManagement import SMAppService
+except ImportError:
+    SMAppService = None
+
+# SMAppServiceStatusEnabled — the app is registered as a login item.
+_SM_STATUS_ENABLED = 1
 
 TRIGGER_KEYS = {
     'shift_r':        'Right Shift',
@@ -221,6 +227,25 @@ def truncate_smart(text, max_len):
     if cut <= max_len * 0.6:  # word boundary too far back; just hard-cut
         cut = max_len - 1
     return text[:cut].rstrip() + '…'
+
+
+def format_transcript_ts(ts_str):
+    """Short human timestamp for a recent-transcript entry.
+
+    Same-day entries show the time ("14:32"); older ones add the date
+    ("6 Aug 14:32"). Returns '' for missing/unparseable timestamps so
+    legacy entries without one still render.
+    """
+    if not ts_str:
+        return ''
+    try:
+        entry = time.strptime(ts_str, '%Y-%m-%dT%H:%M:%S')
+    except (ValueError, TypeError):
+        return ''
+    now = time.localtime()
+    if (entry.tm_year, entry.tm_yday) == (now.tm_year, now.tm_yday):
+        return time.strftime('%H:%M', entry)
+    return time.strftime('%-d %b %H:%M', entry)
 
 # Menu bar logo. The icon is static (one logo for all states); running
 # state is conveyed by the floating pill and the dropdown status text.
@@ -649,14 +674,14 @@ class OpenWhisperMenuBar(rumps.App):
                 self._last_transcription = first_text
                 self.last_text_item.title = f"\"{truncate_smart(first_text, 60)}\""
 
-        # Preset radio buttons
-        self.preset_items = {}
-        current_preset = self._detect_preset(cfg)
-        for key, preset in PRESETS.items():
-            item = rumps.MenuItem(preset['label'], callback=self.set_preset)
-            item._preset_key = key
-            item.state = 1 if key == current_preset else 0
-            self.preset_items[key] = item
+        # Launch at Login — native login item registration. Only meaningful
+        # (and only functional) when running from a built .app bundle.
+        # NOTE: the tick state is set after `self.menu = [...]` below —
+        # rumps silently drops a pre-ticked MenuItem from the bulk menu
+        # assembly in some combinations, so insert first, tick second.
+        self.login_item = None
+        if IN_BUNDLE and SMAppService is not None:
+            self.login_item = rumps.MenuItem("Launch at Login", callback=self.toggle_login_item)
 
         # Trigger key submenu — title shows the currently selected trigger.
         self.trigger_items = {}
@@ -767,9 +792,10 @@ class OpenWhisperMenuBar(rumps.App):
             None,
             rumps.MenuItem("Restart", callback=self.restart_daemon),
             None,
-            *self.preset_items.values(),
-            None,
             trigger_menu,
+            # NB: `is not None`, not truthiness — a childless rumps MenuItem
+            # is an empty dict subclass and evaluates False.
+            *([self.login_item] if self.login_item is not None else []),
             None,
             advanced_menu,
             None,
@@ -779,6 +805,15 @@ class OpenWhisperMenuBar(rumps.App):
         # Populate recent-transcripts items now that the submenu is attached
         # to the NSMenu hierarchy (calling .clear() before this point fails).
         self._rebuild_recent_transcripts_menu()
+
+        # Tick the login item only now that it's safely in the menu (see
+        # note above its creation).
+        if self.login_item is not None:
+            try:
+                svc = SMAppService.mainAppService()
+                self.login_item.state = 1 if svc.status() == _SM_STATUS_ENABLED else 0
+            except Exception:
+                self.login_item.state = 0
 
     @rumps.timer(0.5)
     def _on_ready(self, sender):
@@ -842,7 +877,9 @@ class OpenWhisperMenuBar(rumps.App):
             text = entry if isinstance(entry, str) else entry.get('text', '')
             if not text:
                 continue
-            item = rumps.MenuItem(f"\"{truncate_smart(text, 50)}\"", callback=self._copy_recent)
+            ts = format_transcript_ts(entry.get('ts')) if isinstance(entry, dict) else ''
+            title = f"{ts}   \"{truncate_smart(text, 50)}\"" if ts else f"\"{truncate_smart(text, 50)}\""
+            item = rumps.MenuItem(title, callback=self._copy_recent)
             item._full_text = text
             self.recent_transcripts_menu.add(item)
         self.recent_transcripts_menu.add(None)
@@ -1016,10 +1053,13 @@ class OpenWhisperMenuBar(rumps.App):
 
             self._restart_attempts += 1
             if self._restart_attempts > self._RESTART_MAX_ATTEMPTS:
-                self._set_persistent_alert(
-                    f"Daemon kept stopping ({self._RESTART_MAX_ATTEMPTS} attempts) — "
-                    f"click Restart to try again"
-                )
+                # A specific alert (e.g. a permission problem) explains the
+                # exits better than the generic give-up message — keep it.
+                if not self._persistent_alert:
+                    self._set_persistent_alert(
+                        f"Daemon kept stopping ({self._RESTART_MAX_ATTEMPTS} attempts) — "
+                        f"click Restart to try again"
+                    )
                 return
 
             delay = self._RESTART_BACKOFF_BASE * (
@@ -1141,6 +1181,10 @@ class OpenWhisperMenuBar(rumps.App):
                 if not isinstance(usage, dict):
                     usage = load_stats()
                 self._status_queue.put({'action': 'stats', 'usage': usage})
+            elif kind == 'permission':
+                # Sticky: survives transient status updates until the daemon
+                # reaches 'ready', so the user always sees what's blocking it.
+                self._set_persistent_alert(event.get('message', 'Permission required'))
             elif kind == 'config_error':
                 message = event.get('message', 'Check config.yaml')
                 self._queue_status(f"Config error: {message}")
@@ -1174,26 +1218,45 @@ class OpenWhisperMenuBar(rumps.App):
         """Status string for the 'ready' state, including the current trigger."""
         return f"Ready — hold {trigger_label_short(self._trigger_key)} to dictate"
 
-    @staticmethod
-    def _detect_preset(cfg):
-        """Return the preset key matching the current transcription model, or
-        None if a non-preset model is selected."""
-        tx = cfg.get('transcription_model', 'turbo')
-        for key, preset in PRESETS.items():
-            if tx == preset['transcription_model']:
-                return key
-        return None
-
-    def _update_preset_states(self, cfg):
-        """Update preset radio buttons based on current config."""
-        current = self._detect_preset(cfg)
-        for key, item in self.preset_items.items():
-            item.state = 1 if key == current else 0
-
     def _restart_daemon(self):
         """Stop and restart daemon (call from background thread)."""
         self.stop_daemon()
         self.start_daemon()
+
+    def _apply_settings(self, note="Applying settings…"):
+        """Apply a saved config change to the running daemon, no restart.
+
+        SIGHUP makes the daemon re-read config.yaml in place — the Whisper
+        model stays loaded, so changes land in well under a second instead
+        of the several seconds a full restart takes. Falls back to a
+        restart if the daemon isn't running.
+        """
+        proc = self.daemon_proc
+        if proc and proc.poll() is None:
+            try:
+                proc.send_signal(signal.SIGHUP)
+                self._queue_status(note)
+                return
+            except Exception:
+                pass
+        threading.Thread(target=self._restart_daemon, daemon=True).start()
+
+    def toggle_login_item(self, sender):
+        """Register/unregister the app itself as a macOS login item."""
+        try:
+            svc = SMAppService.mainAppService()
+            if svc.status() == _SM_STATUS_ENABLED:
+                ok, err = svc.unregisterAndReturnError_(None)
+            else:
+                ok, err = svc.registerAndReturnError_(None)
+            if not ok:
+                self._queue_status(f"Login item change failed: {err}")
+                return
+            enabled = svc.status() == _SM_STATUS_ENABLED
+            sender.state = 1 if enabled else 0
+            self._queue_status(f"Launch at Login {'on' if enabled else 'off'}")
+        except Exception as e:
+            self._queue_status(f"Login item change failed: {e}")
 
     def restart_daemon(self, sender):
         # User-initiated restart bypasses the auto-restart cap and clears
@@ -1206,20 +1269,6 @@ class OpenWhisperMenuBar(rumps.App):
         self._clear_persistent_alert()
         threading.Thread(target=self._restart_daemon, daemon=True).start()
 
-    def set_preset(self, sender):
-        preset_key = sender._preset_key
-        preset = PRESETS[preset_key]
-        cfg = load_config()
-        cfg['transcription_model'] = preset['transcription_model']
-        save_config(cfg)
-        for key, item in self.preset_items.items():
-            item.state = 1 if key == preset_key else 0
-        for key, item in self.transcription_items.items():
-            item.state = 1 if key == preset['transcription_model'] else 0
-        active = TRANSCRIPTION_MODELS.get(preset['transcription_model'], preset['transcription_model'])
-        self.transcription_menu.title = f"Transcription Model — {active}"
-        threading.Thread(target=self._restart_daemon, daemon=True).start()
-
     def set_transcription_model(self, sender):
         model_key = sender._transcription_key
         cfg = load_config()
@@ -1227,9 +1276,8 @@ class OpenWhisperMenuBar(rumps.App):
         save_config(cfg)
         for key, item in self.transcription_items.items():
             item.state = 1 if key == model_key else 0
-        self._update_preset_states(cfg)
         self.transcription_menu.title = f"Transcription Model — {TRANSCRIPTION_MODELS.get(model_key, model_key)}"
-        threading.Thread(target=self._restart_daemon, daemon=True).start()
+        self._apply_settings(f"Loading {TRANSCRIPTION_MODELS.get(model_key, model_key)}…")
 
     def set_trigger_key(self, sender):
         trigger_key = sender._trigger_key
@@ -1240,17 +1288,16 @@ class OpenWhisperMenuBar(rumps.App):
         for key, item in self.trigger_items.items():
             item.state = 1 if key == trigger_key else 0
         self.trigger_menu.title = f"Trigger Key — {TRIGGER_KEYS.get(trigger_key, trigger_key)}"
-        threading.Thread(target=self._restart_daemon, daemon=True).start()
+        self._apply_settings()
 
     def _toggle_top_flag(self, key, item, label, default=False):
-        """Flip cfg[key] (top-level), update the menu item, restart the daemon."""
+        """Flip cfg[key] (top-level), update the menu item, apply live."""
         cfg = load_config()
         new_val = not bool(cfg.get(key, default))
         cfg[key] = new_val
         save_config(cfg)
         item.state = 1 if new_val else 0
-        self._queue_status(f"{label} {'on' if new_val else 'off'} — restarting daemon…")
-        threading.Thread(target=self._restart_daemon, daemon=True).start()
+        self._apply_settings(f"{label} {'on' if new_val else 'off'}")
 
     def toggle_streaming(self, sender):
         # Streaming is a default-on flag; absence-of-key means "on".
@@ -1263,8 +1310,7 @@ class OpenWhisperMenuBar(rumps.App):
         cfg['advanced'] = advanced
         save_config(cfg)
         self.streaming_item.state = 1 if new_val else 0
-        self._queue_status(f"Streaming transcribe {'on' if new_val else 'off'} — restarting daemon…")
-        threading.Thread(target=self._restart_daemon, daemon=True).start()
+        self._apply_settings(f"Streaming transcribe {'on' if new_val else 'off'}")
 
     def toggle_fast_typing(self, sender):
         # Fast Typing is a default-on flag; we want absence-of-key to mean "on".
@@ -1277,8 +1323,7 @@ class OpenWhisperMenuBar(rumps.App):
         cfg['advanced'] = advanced
         save_config(cfg)
         self.fast_typing_item.state = 1 if new_val else 0
-        self._queue_status(f"Fast typing {'on' if new_val else 'off'} — restarting daemon…")
-        threading.Thread(target=self._restart_daemon, daemon=True).start()
+        self._apply_settings(f"Fast typing {'on' if new_val else 'off'}")
 
     def toggle_sound(self, sender):
         self._toggle_top_flag('sound_enabled', self.sound_item, 'Sound feedback')
@@ -1304,8 +1349,7 @@ class OpenWhisperMenuBar(rumps.App):
                 item.state = 1 if key == device_name else 0
         label = device_name if device_name else 'System Default'
         self.input_device_menu.title = f"Input Device — {label}"
-        self._queue_status(f"Input device: {label} — restarting daemon…")
-        threading.Thread(target=self._restart_daemon, daemon=True).start()
+        self._apply_settings(f"Input device: {label}")
 
     def set_vocabulary(self, sender):
         cfg = load_config()
@@ -1326,8 +1370,7 @@ class OpenWhisperMenuBar(rumps.App):
         cfg['vocabulary'] = terms
         save_config(cfg)
         self.vocabulary_item.title = "Vocabulary…" if not terms else f"Vocabulary… ({len(terms)})"
-        self._queue_status(f"Vocabulary saved ({len(terms)} term{'s' if len(terms) != 1 else ''}) — restarting daemon…")
-        threading.Thread(target=self._restart_daemon, daemon=True).start()
+        self._apply_settings(f"Vocabulary saved ({len(terms)} term{'s' if len(terms) != 1 else ''})")
 
     def set_phonetic_corrections(self, sender):
         cfg = load_config()
@@ -1366,10 +1409,9 @@ class OpenWhisperMenuBar(rumps.App):
         self.phonetic_corrections_item.title = (
             "Phonetic Corrections…" if n == 0 else f"Phonetic Corrections… ({n})"
         )
-        self._queue_status(
-            f"Phonetic corrections saved ({n} pair{'s' if n != 1 else ''}) — restarting daemon…"
+        self._apply_settings(
+            f"Phonetic corrections saved ({n} pair{'s' if n != 1 else ''})"
         )
-        threading.Thread(target=self._restart_daemon, daemon=True).start()
 
     def copy_last(self, sender):
         """Copy the last transcription to clipboard."""

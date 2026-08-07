@@ -417,6 +417,58 @@ d16.stop_and_transcribe()
 check("streaming: silent tail skipped, chunk still typed",
       d16.typed == ["hello world"], f"typed={d16.typed}")
 
+# --- Idle model unload -------------------------------------------------------
+
+d17 = make_daemon()
+unloads = []
+d17._unload_whisper = lambda idle: unloads.append(idle)
+d17._model_loaded = True
+d17.config['model_idle_unload_minutes'] = 120
+
+d17._last_activity = time.time() - 30 * 60
+check("idle unload: not before the threshold",
+      d17._maybe_unload_model() is False and unloads == [])
+
+d17._last_activity = time.time() - 121 * 60
+check("idle unload: fires past the threshold",
+      d17._maybe_unload_model() is True and len(unloads) == 1)
+
+d17._model_loaded = True
+d17._recording = True
+check("idle unload: never during a recording",
+      d17._maybe_unload_model() is False and len(unloads) == 1)
+d17._recording = False
+
+d17.config['model_idle_unload_minutes'] = 0
+check("idle unload: 0 disables it",
+      d17._maybe_unload_model() is False and len(unloads) == 1)
+
+# --- Live config reload (SIGHUP path) ----------------------------------------
+
+import tempfile  # noqa: E402
+
+d18 = make_daemon()
+with tempfile.NamedTemporaryFile('w', suffix='.yaml', delete=False) as f:
+    f.write("trigger_key: shift_r\noverlay_enabled: false\n")
+    reload_path = f.name
+d18._config_path = reload_path
+d18.reload_config()
+check("config reload: trigger key applied live",
+      d18._trigger_keys == {ow.KEY_MAP['shift_r']},
+      f"keys={d18._trigger_keys}")
+check("config reload: defaults filled in",
+      d18.config['transcription_model'] == 'turbo'
+      and d18.config['streaming_transcribe_enabled'] is True)
+
+# An invalid config must be rejected wholesale, keeping the old settings.
+with open(reload_path, 'w') as f:
+    f.write("trigger_key: not_a_key\n")
+d18.reload_config()
+check("config reload: invalid config rejected, old trigger kept",
+      d18._trigger_keys == {ow.KEY_MAP['shift_r']})
+
+Path(reload_path).unlink(missing_ok=True)
+
 print()
 failed = [r for r in results if not r[1]]
 print(f"{len(results) - len(failed)}/{len(results)} passed")

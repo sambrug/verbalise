@@ -26,14 +26,14 @@ Hold the trigger key: audio records and a floating pill shows a live waveform. W
 
 - **Status** - current state, including the trigger key when ready
 - **Last transcription** - click to copy to clipboard
-- **Recent Transcripts** - last 10 transcripts, click any to copy
+- **Recent Transcripts** - last 10 transcripts with timestamps, click any to copy
 - **Restart** - restart the daemon
-- **Fast / Balanced / Quality** - presets that swap the Whisper model
 - **Trigger Key** - single key or combo (e.g. Right Option + Right Shift)
+- **Launch at Login** - register the app as a login item (shown when running the built app)
 - **Advanced** - transcription model picker, input device, vocabulary, phonetic corrections, toggles, stats
 - **Quit Open Whisper**
 
-Menu changes auto-restart the daemon.
+Menu changes apply live - the daemon re-reads its config in place, so the speech model stays loaded and settings land instantly.
 
 ## Configuration
 
@@ -63,6 +63,7 @@ Under `advanced:` in `config.yaml`:
 |---------|---------|-------------|
 | `trim_silence_enabled` | `true` | Trims leading/trailing silence before transcription |
 | `streaming_transcribe_enabled` | `true` | Transcribes audio in chunks at silence gaps while you speak, so post-release latency stays flat |
+| `model_idle_unload_minutes` | `120` | Unload the Whisper model from GPU memory (~1.5GB) after this long without a dictation; it reloads while you speak on the next one. `0` keeps it loaded forever |
 | `fast_typing_enabled` | `true` | Inject short transcripts via Quartz unicode events instead of clipboard paste |
 | `fast_typing_max_chars` | `80` | Length threshold for the unicode-event typing path |
 | `clipboard_restore_delay` | `1.5` | Seconds the dictation stays on the clipboard after a paste before your previous clipboard is restored. Raise it if a slow app still pastes your old clipboard; set `0` to never restore |
@@ -96,6 +97,7 @@ Logs are written to `~/Library/Logs/Open Whisper/daemon.log`. Use **View Logs** 
 - **Stuck on Loading** - Whisper model downloading for the first time (requires internet).
 - **Recording but no text** - Microphone permission not granted. Check System Settings > Privacy & Security > Microphone.
 - **Recording won't stop / pill stuck** - press Escape; the daemon force-resets and stays usable.
+- **"Needs Accessibility permission" after reinstalling** - macOS ties the grant to the exact build, so replacing the app invalidates it even though the toggle still shows on. Remove Open Whisper from System Settings > Privacy & Security > Accessibility and re-add it.
 
 Run non-interactive startup checks (config, permissions, key imports):
 ```bash

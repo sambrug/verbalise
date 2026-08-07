@@ -5,4 +5,5 @@ mlx-whisper>=0.4.0
 pyyaml>=6.0
 rumps>=0.4.0
 pyobjc-framework-Cocoa>=10.0
+pyobjc-framework-ServiceManagement>=10.0
 certifi>=2024.0.0

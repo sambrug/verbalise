@@ -510,6 +510,7 @@ def load_config(config_path):
         'fast_typing_max_chars':   advanced_cfg.get('fast_typing_max_chars', 80),
         'clipboard_restore_delay': advanced_cfg.get('clipboard_restore_delay', 1.5),
         'streaming_transcribe_enabled': advanced_cfg.get('streaming_transcribe_enabled', True),
+        'model_idle_unload_minutes': advanced_cfg.get('model_idle_unload_minutes', 120),
         'vocabulary':              cfg.get('vocabulary', []) or [],
         'phonetic_corrections':    cfg.get('phonetic_corrections', {}) or {},
         'input_device':            cfg.get('input_device', None),
@@ -572,8 +573,9 @@ def update_stats_and_recent(text):
 
 
 class OpenWhisper:
-    def __init__(self, config):
+    def __init__(self, config, config_path=None):
         self.config = config
+        self._config_path = config_path
         self.sample_rate = config['sample_rate']
 
         # Parse trigger — single key or combo (e.g. 'alt_r+shift_r')
@@ -628,6 +630,14 @@ class OpenWhisper:
         self._overlay_proc = None
         self._overlay_lock = threading.Lock()
         self._current_rms = 0.0
+
+        # Model lifecycle. The Whisper model is unloaded from GPU memory
+        # after a configurable idle stretch and reloaded on the next
+        # dictation. _transcribe_lock serialises model load/inference so a
+        # background wake can't race a streaming chunk into a double load.
+        self._model_loaded = False
+        self._last_activity = time.time()
+        self._transcribe_lock = threading.Lock()
 
     def _start_overlay(self):
         """Spawn the overlay process if enabled and binary exists."""
@@ -725,7 +735,10 @@ class OpenWhisper:
         try:
             silent = np.zeros(self.sample_rate, dtype=np.float32)
             language = 'en' if model.startswith('distil-') else self.config['language']
-            mlx_whisper.transcribe(silent, path_or_hf_repo=repo, verbose=None, language=language)
+            with self._transcribe_lock:
+                mlx_whisper.transcribe(silent, path_or_hf_repo=repo, verbose=None, language=language)
+            self._model_loaded = True
+            self._last_activity = time.time()
             log("  Whisper ready.")
         except Exception as e:
             # Full traceback at debug-level so future bundle-related failures
@@ -734,6 +747,122 @@ class OpenWhisper:
             log(f"  Failed to load Whisper model: {e}")
             log(f"  Traceback:\n{traceback.format_exc()}")
             log("  The model will be downloaded on first use (requires internet).")
+
+    def _unload_whisper(self, idle_minutes):
+        """Drop the Whisper model from GPU memory after an idle stretch.
+
+        The next dictation reloads it: start_recording kicks a background
+        wake as soon as the trigger is held, so most of the reload happens
+        while the user is still speaking.
+        """
+        try:
+            import gc
+            import mlx.core as mx
+            from mlx_whisper import transcribe as _mlx_transcribe
+            with self._transcribe_lock:
+                _mlx_transcribe.ModelHolder.model = None
+                _mlx_transcribe.ModelHolder.model_path = None
+                gc.collect()
+                mx.clear_cache()
+            self._model_loaded = False
+            log(f"Whisper model unloaded after {idle_minutes:.0f}m idle — "
+                f"next dictation reloads it")
+        except Exception as e:
+            log(f"Model unload failed: {e}")
+
+    def _maybe_unload_model(self, now=None):
+        """Unload the model if it's been idle past the configured threshold.
+
+        Returns True when an unload happened. `model_idle_unload_minutes`
+        <= 0 disables unloading entirely.
+        """
+        minutes = self.config.get('model_idle_unload_minutes', 120)
+        if not minutes or minutes <= 0:
+            return False
+        if not self._model_loaded or self._recording or self._processing:
+            return False
+        now = now if now is not None else time.time()
+        idle_minutes = (now - self._last_activity) / 60
+        if idle_minutes < minutes:
+            return False
+        self._unload_whisper(idle_minutes)
+        return True
+
+    def _idle_monitor(self):
+        """Check once a minute whether the model has gone idle."""
+        while not self._shutdown.is_set():
+            self._shutdown.wait(timeout=60)
+            if self._shutdown.is_set():
+                return
+            try:
+                self._maybe_unload_model()
+            except Exception as e:
+                log(f"Idle monitor error: {e}")
+
+    def _wake_model(self):
+        """Reload an unloaded model in the background during recording."""
+        log("Waking Whisper model...")
+        emit_event("state", state="recording", text="Recording… (waking speech model)")
+        self.preload_whisper()
+
+    def reload_config(self):
+        """Re-read config.yaml and apply what can change without a restart.
+
+        Covers everything except a mid-recording change: trigger keys,
+        overlay on/off/style, model choice (preloaded in the background),
+        streaming, typing, sound, devices, vocabulary and corrections all
+        take effect immediately or on the next dictation. Invalid configs
+        are rejected wholesale — the daemon keeps running on the old one.
+        """
+        if self._config_path is None:
+            log("Config reload requested but no config path — ignoring")
+            return
+        try:
+            new_config = load_config(self._config_path)
+        except Exception as e:
+            log(f"Config reload failed ({e}) — keeping current settings")
+            emit_event("warning", message=f"Config reload failed: {e}")
+            return
+        errors, warnings = validate_config(new_config)
+        if errors:
+            for err in errors:
+                log(f"  Config error: {err}")
+            emit_event("warning", message="Config reload rejected — see logs")
+            return
+        for w in warnings:
+            log(f"  Warning: {w}")
+
+        # Don't swap state under an active dictation; wait briefly for idle.
+        for _ in range(50):
+            if not self._recording and not self._processing:
+                break
+            time.sleep(0.1)
+
+        old = self.config
+        self.config = new_config
+        self.sample_rate = new_config['sample_rate']
+
+        if new_config['trigger_key'] != old['trigger_key']:
+            self._trigger_keys = {KEY_MAP[p] for p in new_config['trigger_key'].split('+')}
+            self._combo_held.clear()
+
+        if new_config['overlay_enabled'] != old['overlay_enabled']:
+            if new_config['overlay_enabled']:
+                self._start_overlay()
+            else:
+                self._stop_overlay()
+        elif (new_config['overlay_enabled']
+              and new_config['overlay_translucent'] != old['overlay_translucent']):
+            self._stop_overlay()
+            self._start_overlay()
+
+        if new_config['transcription_model'] != old['transcription_model']:
+            # Load the new model off-thread; ModelHolder swaps it in.
+            self._model_loaded = False
+            threading.Thread(target=self.preload_whisper, daemon=True).start()
+
+        log("Config reloaded")
+        emit_event("state", state="ready")
 
     def _prewarm_audio(self):
         """Open and immediately close a throwaway InputStream so CoreAudio
@@ -867,7 +996,10 @@ class OpenWhisper:
         vocab = self.config.get('vocabulary', []) or []
         if vocab:
             kwargs['initial_prompt'] = "Vocabulary: " + ", ".join(vocab) + "."
-        result = mlx_whisper.transcribe(audio, **kwargs)
+        with self._transcribe_lock:
+            result = mlx_whisper.transcribe(audio, **kwargs)
+        self._model_loaded = True
+        self._last_activity = time.time()
         text = result.get('text', '').strip()
         return _apply_phonetic_corrections(text, self.config.get('phonetic_corrections') or {})
 
@@ -1010,8 +1142,13 @@ class OpenWhisper:
                 self._stream = self._open_input_stream()
                 self._stream.start()
             log("Recording...")
+            self._last_activity = time.time()
             emit_event("state", state="recording")
             self._overlay_send({"cmd": "show", "state": "recording"})
+            # If the model was unloaded for idleness, start reloading it now
+            # so most of the wake happens while the user is still speaking.
+            if not self._model_loaded:
+                threading.Thread(target=self._wake_model, daemon=True).start()
             threading.Thread(target=self._overlay_level_sender, daemon=True).start()
             # Backup for missed pynput release events — see _key_watchdog.
             threading.Thread(target=self._key_watchdog, daemon=True).start()
@@ -1454,9 +1591,15 @@ class OpenWhisper:
             self._listener.stop()
 
     def run(self):
-        # Handle SIGTERM/SIGINT for graceful shutdown
+        # Handle SIGTERM/SIGINT for graceful shutdown. SIGHUP re-reads the
+        # config so settings changes apply without a restart; the work runs
+        # on a thread because signal handlers must return fast.
         signal.signal(signal.SIGTERM, lambda *_: self.shutdown())
         signal.signal(signal.SIGINT, lambda *_: self.shutdown())
+        signal.signal(
+            signal.SIGHUP,
+            lambda *_: threading.Thread(target=self.reload_config, daemon=True).start(),
+        )
 
         emit_event("state", state="loading", text="Starting up...")
         self.preload_whisper()
@@ -1469,6 +1612,7 @@ class OpenWhisper:
 
         self._listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
         self._listener.start()
+        threading.Thread(target=self._idle_monitor, daemon=True).start()
 
         # Wait for shutdown signal or listener to stop
         while not self._shutdown.is_set() and self._listener.is_alive():
@@ -1484,7 +1628,13 @@ def check_accessibility():
         if not AXIsProcessTrusted():
             log("  Accessibility permission required!")
             log("  Grant access: System Settings > Privacy & Security > Accessibility")
-            log("  Add the terminal app or Open Whisper.app, then restart.")
+            log("  If Open Whisper is already listed, remove it and re-add it —")
+            log("  the grant goes stale whenever the app is rebuilt/reinstalled.")
+            emit_event(
+                "permission",
+                message=("Needs Accessibility permission — remove and re-add "
+                         "Open Whisper in System Settings > Accessibility"),
+            )
             return False
     except ImportError:
         pass  # Can't check — proceed and hope for the best
@@ -1498,9 +1648,11 @@ def check_microphone():
         default_input = sd.query_devices(kind='input')
         if default_input is None:
             log("  No microphone found!")
+            emit_event("permission", message="No microphone found — check input device")
             return False
     except Exception as e:
         log(f"  Microphone check failed: {e}")
+        emit_event("permission", message="Microphone unavailable — check input device")
         return False
 
     # Request microphone permission (triggers macOS prompt if not yet granted)
@@ -1529,6 +1681,11 @@ def check_microphone():
         if status != 3:  # not authorized
             log("  Microphone permission not granted!")
             log("  Grant access: System Settings > Privacy & Security > Microphone")
+            emit_event(
+                "permission",
+                message=("Needs Microphone permission — enable Open Whisper in "
+                         "System Settings > Microphone"),
+            )
             return False
     except Exception:
         pass  # Can't check — proceed anyway
@@ -1620,7 +1777,7 @@ def main():
     if not check_microphone():
         sys.exit(1)
 
-    daemon = OpenWhisper(config)
+    daemon = OpenWhisper(config, config_path=config_path)
     daemon.run()
 
 

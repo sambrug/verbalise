@@ -36,6 +36,10 @@ advanced:
   # Transcribe long dictations in chunks at natural pauses while you're
   # still speaking, so the wait after key release stays short.
   streaming_transcribe_enabled: true
+  # Unload the Whisper model from GPU memory after this many minutes
+  # without a dictation (~1.5GB freed). It reloads automatically while
+  # you speak on the next dictation. 0 keeps it loaded forever.
+  model_idle_unload_minutes: 120
   # Inject short transcripts as keystrokes instead of clipboard paste.
   fast_typing_enabled: true
   fast_typing_max_chars: 80
