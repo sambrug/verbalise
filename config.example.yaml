@@ -17,8 +17,10 @@ release_delay: 0.05   # pause between key release and paste (seconds)
 sample_rate: 16000
 
 sound_enabled: false        # tink/pop sounds on record start/stop
-overlay_enabled: true       # floating pill while recording/processing
-overlay_translucent: true   # Liquid Glass pill vs solid capsule
+
+# Floating pill while recording/processing:
+#   translucent (Liquid Glass) | solid (opaque capsule) | off
+overlay_style: translucent
 
 # Domain terms (acronyms, names) Whisper should favour.
 vocabulary: []

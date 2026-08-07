@@ -31,7 +31,7 @@ CONFIG = {
     'sample_rate': 16000, 'transcription_model': 'turbo',
     'trigger_key': 'alt_r+shift_r', 'language': 'en',
     'min_duration': 0.5, 'max_duration': 300, 'release_delay': 0.0,
-    'sound_enabled': False, 'overlay_enabled': False, 'vocabulary': [],
+    'sound_enabled': False, 'overlay_style': 'off', 'vocabulary': [],
     'input_device': None, 'phonetic_corrections': {},
 }
 
@@ -459,6 +459,9 @@ check("config reload: trigger key applied live",
 check("config reload: defaults filled in",
       d18.config['transcription_model'] == 'turbo'
       and d18.config['streaming_transcribe_enabled'] is True)
+check("config reload: legacy overlay pair maps to overlay_style",
+      d18.config['overlay_style'] == 'off',
+      f"style={d18.config['overlay_style']}")
 
 # An invalid config must be rejected wholesale, keeping the old settings.
 with open(reload_path, 'w') as f:

@@ -188,6 +188,44 @@ except ImportError:
 # SMAppServiceStatusEnabled — the app is registered as a login item.
 _SM_STATUS_ENABLED = 1
 
+OVERLAY_STYLES = {
+    'off':          'Off',
+    'solid':        'Solid',
+    'translucent':  'Translucent',
+}
+
+
+def resolve_overlay_style(cfg):
+    """Normalise overlay config to 'off' / 'solid' / 'translucent'.
+
+    Mirrors the daemon's mapping of the legacy overlay_enabled +
+    overlay_translucent pair onto the single overlay_style key.
+    """
+    style = cfg.get('overlay_style')
+    if style in OVERLAY_STYLES:
+        return style
+    if 'overlay_enabled' in cfg or 'overlay_translucent' in cfg:
+        if not cfg.get('overlay_enabled', True):
+            return 'off'
+        return 'translucent' if cfg.get('overlay_translucent', True) else 'solid'
+    return 'translucent'
+
+
+def set_count_badge(item, count):
+    """Show `count` as a native right-aligned menu badge (macOS 14+).
+
+    Falls back to appending "(n)" to the title on older systems. A zero
+    count clears the badge either way.
+    """
+    try:
+        from AppKit import NSMenuItemBadge
+        badge = NSMenuItemBadge.alloc().initWithCount_(int(count)) if count else None
+        item._menuitem.setBadge_(badge)
+    except Exception:
+        base = item.title.split(' (')[0]
+        item.title = f"{base} ({count})" if count else base
+
+
 TRIGGER_KEYS = {
     'shift_r':        'Right Shift',
     'shift_l':        'Left Shift',
@@ -590,8 +628,8 @@ def format_stats(usage):
     words = usage.get('total_words', 0)
     recs = usage.get('total_recordings', 0)
     if words == 0 and recs == 0:
-        return "Stats: none yet"
-    return f"Stats: {words:,} words • {recs:,} recordings"
+        return "No dictations yet"
+    return f"{words:,} words • {recs:,} recordings"
 
 
 def load_config():
@@ -653,8 +691,7 @@ class OpenWhisperMenuBar(rumps.App):
         streaming_enabled = bool(advanced_cfg.get('streaming_transcribe_enabled', True))
         fast_typing_enabled = bool(advanced_cfg.get('fast_typing_enabled', True))
         sound_enabled = bool(cfg.get('sound_enabled', False))
-        overlay_enabled = bool(cfg.get('overlay_enabled', True))
-        overlay_translucent = bool(cfg.get('overlay_translucent', True))
+        overlay_style = resolve_overlay_style(cfg)
 
         # Build menu
         self.status_item = rumps.MenuItem(STATUS_LABELS['loading'])
@@ -683,9 +720,10 @@ class OpenWhisperMenuBar(rumps.App):
         if IN_BUNDLE and SMAppService is not None:
             self.login_item = rumps.MenuItem("Launch at Login", callback=self.toggle_login_item)
 
-        # Trigger key submenu — title shows the currently selected trigger.
+        # Trigger key submenu — native style: plain title, the tick inside
+        # carries the current choice (the ready status shows it anyway).
         self.trigger_items = {}
-        trigger_menu = rumps.MenuItem(f"Trigger Key — {TRIGGER_KEYS.get(trigger_key, trigger_key)}")
+        trigger_menu = rumps.MenuItem("Trigger Key")
         self.trigger_menu = trigger_menu
         for key, label in TRIGGER_KEYS.items():
             item = rumps.MenuItem(label, callback=self.set_trigger_key)
@@ -701,10 +739,9 @@ class OpenWhisperMenuBar(rumps.App):
         advanced_menu = rumps.MenuItem("Advanced")
 
         # Recognition ---------------------------------------------------
-        # Transcription model submenu — title shows the active model.
+        # Transcription model submenu — plain title, tick inside.
         self.transcription_items = {}
-        active_model_label = TRANSCRIPTION_MODELS.get(transcription_model, transcription_model)
-        transcription_menu = rumps.MenuItem(f"Transcription Model — {active_model_label}")
+        transcription_menu = rumps.MenuItem("Transcription Model")
         self.transcription_menu = transcription_menu
         for key, label in TRANSCRIPTION_MODELS.items():
             item = rumps.MenuItem(label, callback=self.set_transcription_model)
@@ -715,21 +752,19 @@ class OpenWhisperMenuBar(rumps.App):
             transcription_menu.add(item)
         advanced_menu.add(transcription_menu)
 
-        # Vocabulary editor — title shows the current term count.
-        vocab_count = len(cfg.get('vocabulary', []) or [])
-        vocab_label = "Vocabulary…" if vocab_count == 0 else f"Vocabulary… ({vocab_count})"
-        self.vocabulary_item = rumps.MenuItem(vocab_label, callback=self.set_vocabulary)
+        # Vocabulary editor — term count shown as a native badge.
+        self.vocabulary_item = rumps.MenuItem("Vocabulary", callback=self.set_vocabulary)
+        set_count_badge(self.vocabulary_item, len(cfg.get('vocabulary', []) or []))
         advanced_menu.add(self.vocabulary_item)
 
         # Phonetic corrections — exact word replacements applied after
         # transcription, for stubborn mishearings that vocabulary biasing
         # alone can't fix (e.g. Whisper hearing "FNOL" as "ethanol").
-        corrections_count = len(cfg.get('phonetic_corrections', {}) or {})
-        corrections_label = ("Phonetic Corrections…" if corrections_count == 0
-                             else f"Phonetic Corrections… ({corrections_count})")
         self.phonetic_corrections_item = rumps.MenuItem(
-            corrections_label, callback=self.set_phonetic_corrections
+            "Phonetic Corrections", callback=self.set_phonetic_corrections
         )
+        set_count_badge(self.phonetic_corrections_item,
+                        len(cfg.get('phonetic_corrections', {}) or {}))
         advanced_menu.add(self.phonetic_corrections_item)
 
         self.streaming_item = rumps.MenuItem("Streaming Transcribe", callback=self.toggle_streaming)
@@ -739,10 +774,10 @@ class OpenWhisperMenuBar(rumps.App):
         advanced_menu.add(None)  # separator
 
         # Input / output -------------------------------------------------
-        # Input device submenu — title shows the active device.
+        # Input device submenu — plain title, tick inside.
         self.input_device_items = {}
         current_device = cfg.get('input_device')
-        input_device_menu = rumps.MenuItem(f"Input Device — {current_device or 'System Default'}")
+        input_device_menu = rumps.MenuItem("Input Device")
         self.input_device_menu = input_device_menu
         default_item = rumps.MenuItem("System Default", callback=self.set_input_device)
         default_item._device_name = None
@@ -767,15 +802,20 @@ class OpenWhisperMenuBar(rumps.App):
         advanced_menu.add(None)  # separator
 
         # Feedback --------------------------------------------------------
-        self.overlay_item = rumps.MenuItem("Overlay", callback=self.toggle_overlay)
-        self.overlay_item.state = 1 if overlay_enabled else 0
-        advanced_menu.add(self.overlay_item)
-
-        self.overlay_translucent_item = rumps.MenuItem(
-            "Translucent Overlay", callback=self.toggle_overlay_translucent
-        )
-        self.overlay_translucent_item.state = 1 if overlay_translucent else 0
-        advanced_menu.add(self.overlay_translucent_item)
+        # Overlay is a three-way pick (off / solid / translucent), replacing
+        # the old pair of toggles where "Translucent" could sit ticked but
+        # inert while the overlay itself was off.
+        self.overlay_style_items = {}
+        overlay_menu = rumps.MenuItem("Overlay")
+        self.overlay_menu = overlay_menu
+        for key, label in OVERLAY_STYLES.items():
+            item = rumps.MenuItem(label, callback=self.set_overlay_style)
+            item._overlay_style = key
+            if key == overlay_style:
+                item.state = 1
+            self.overlay_style_items[key] = item
+            overlay_menu.add(item)
+        advanced_menu.add(overlay_menu)
 
         self.sound_item = rumps.MenuItem("Sound Feedback", callback=self.toggle_sound)
         self.sound_item.state = 1 if sound_enabled else 0
@@ -1284,7 +1324,6 @@ class OpenWhisperMenuBar(rumps.App):
         save_config(cfg)
         for key, item in self.transcription_items.items():
             item.state = 1 if key == model_key else 0
-        self.transcription_menu.title = f"Transcription Model — {TRANSCRIPTION_MODELS.get(model_key, model_key)}"
         self._apply_settings(f"Loading {TRANSCRIPTION_MODELS.get(model_key, model_key)}…")
 
     def set_trigger_key(self, sender):
@@ -1295,7 +1334,6 @@ class OpenWhisperMenuBar(rumps.App):
         self._trigger_key = trigger_key
         for key, item in self.trigger_items.items():
             item.state = 1 if key == trigger_key else 0
-        self.trigger_menu.title = f"Trigger Key — {TRIGGER_KEYS.get(trigger_key, trigger_key)}"
         self._apply_settings()
 
     def _toggle_top_flag(self, key, item, label, default=False):
@@ -1336,14 +1374,17 @@ class OpenWhisperMenuBar(rumps.App):
     def toggle_sound(self, sender):
         self._toggle_top_flag('sound_enabled', self.sound_item, 'Sound feedback')
 
-    def toggle_overlay(self, sender):
-        self._toggle_top_flag('overlay_enabled', self.overlay_item, 'Overlay', default=True)
-
-    def toggle_overlay_translucent(self, sender):
-        self._toggle_top_flag(
-            'overlay_translucent', self.overlay_translucent_item,
-            'Translucent overlay', default=True,
-        )
+    def set_overlay_style(self, sender):
+        style = sender._overlay_style
+        cfg = load_config()
+        cfg['overlay_style'] = style
+        # Retire the legacy pair so the config carries one source of truth.
+        cfg.pop('overlay_enabled', None)
+        cfg.pop('overlay_translucent', None)
+        save_config(cfg)
+        for key, item in self.overlay_style_items.items():
+            item.state = 1 if key == style else 0
+        self._apply_settings(f"Overlay: {OVERLAY_STYLES[style]}")
 
     def set_input_device(self, sender):
         device_name = getattr(sender, '_device_name', None)
@@ -1356,7 +1397,6 @@ class OpenWhisperMenuBar(rumps.App):
             else:
                 item.state = 1 if key == device_name else 0
         label = device_name if device_name else 'System Default'
-        self.input_device_menu.title = f"Input Device — {label}"
         self._apply_settings(f"Input device: {label}")
 
     def set_vocabulary(self, sender):
@@ -1377,7 +1417,7 @@ class OpenWhisperMenuBar(rumps.App):
         terms = [line.strip() for line in result.splitlines() if line.strip()]
         cfg['vocabulary'] = terms
         save_config(cfg)
-        self.vocabulary_item.title = "Vocabulary…" if not terms else f"Vocabulary… ({len(terms)})"
+        set_count_badge(self.vocabulary_item, len(terms))
         self._apply_settings(f"Vocabulary saved ({len(terms)} term{'s' if len(terms) != 1 else ''})")
 
     def set_phonetic_corrections(self, sender):
@@ -1414,9 +1454,7 @@ class OpenWhisperMenuBar(rumps.App):
         cfg['phonetic_corrections'] = corrections
         save_config(cfg)
         n = len(corrections)
-        self.phonetic_corrections_item.title = (
-            "Phonetic Corrections…" if n == 0 else f"Phonetic Corrections… ({n})"
-        )
+        set_count_badge(self.phonetic_corrections_item, n)
         self._apply_settings(
             f"Phonetic corrections saved ({n} pair{'s' if n != 1 else ''})"
         )

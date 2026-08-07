@@ -54,10 +54,12 @@ Advanced, grouped by concern:
 
 | Group | Items |
 |-------|-------|
-| Recognition | Transcription Model, Vocabulary…, Phonetic Corrections…, Streaming Transcribe |
+| Recognition | Transcription Model, Vocabulary, Phonetic Corrections, Streaming Transcribe |
 | Input / output | Input Device, Fast Typing |
-| Feedback | Overlay, Translucent Overlay, Sound Feedback |
-| Info | Stats (words and recordings), Open Config, View Logs |
+| Feedback | Overlay (Off / Solid / Translucent), Sound Feedback |
+| Info | Lifetime words and recordings, Open Config, View Logs |
+
+Pickers show the current choice as a tick inside the submenu; Vocabulary and Phonetic Corrections show their counts as right-aligned badges.
 
 Every change applies live via a config reload - the daemon keeps running and the model stays warm.
 
@@ -75,8 +77,7 @@ Config lives at `~/Library/Application Support/Open Whisper/config.yaml` (Advanc
 | `release_delay` | `0.05` | Pause after key release before pasting (seconds) |
 | `sample_rate` | `16000` | Audio sample rate |
 | `sound_enabled` | `false` | Tink/pop sounds on record start/stop |
-| `overlay_enabled` | `true` | Show the floating pill while recording/processing |
-| `overlay_translucent` | `true` | Liquid Glass pill vs solid capsule |
+| `overlay_style` | `translucent` | Floating pill: `translucent` (Liquid Glass), `solid`, or `off`. (Legacy `overlay_enabled`/`overlay_translucent` configs are mapped automatically) |
 | `vocabulary` | `[]` | Domain terms to bias Whisper recognition |
 | `phonetic_corrections` | `{}` | Whole-word replacements applied after transcription |
 | `input_device` | `null` | Audio input device name; `null` uses system default |

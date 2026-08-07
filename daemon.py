@@ -488,6 +488,22 @@ def _apply_phonetic_corrections(text, corrections):
     return text
 
 
+def _resolve_overlay_style(cfg):
+    """Normalise overlay config to one of 'off' / 'solid' / 'translucent'.
+
+    Newer configs carry `overlay_style` directly; older ones used the pair
+    `overlay_enabled` + `overlay_translucent`, which map across here.
+    """
+    style = cfg.get('overlay_style')
+    if style in ('off', 'solid', 'translucent'):
+        return style
+    if 'overlay_enabled' in cfg or 'overlay_translucent' in cfg:
+        if not cfg.get('overlay_enabled', True):
+            return 'off'
+        return 'translucent' if cfg.get('overlay_translucent', True) else 'solid'
+    return 'translucent'
+
+
 def load_config(config_path):
     with open(config_path) as f:
         cfg = yaml.safe_load(f) or {}
@@ -503,8 +519,7 @@ def load_config(config_path):
         'sample_rate':         cfg.get('sample_rate', 16000),
         'max_duration':            cfg.get('max_duration', 300),
         'sound_enabled':           cfg.get('sound_enabled', False),
-        'overlay_enabled':         cfg.get('overlay_enabled', True),
-        'overlay_translucent':     cfg.get('overlay_translucent', True),
+        'overlay_style':           _resolve_overlay_style(cfg),
         'trim_silence_enabled':    advanced_cfg.get('trim_silence_enabled', cfg.get('trim_silence_enabled', True)),
         'fast_typing_enabled':     advanced_cfg.get('fast_typing_enabled', True),
         'fast_typing_max_chars':   advanced_cfg.get('fast_typing_max_chars', 80),
@@ -641,14 +656,15 @@ class OpenWhisper:
 
     def _start_overlay(self):
         """Spawn the overlay process if enabled and binary exists."""
-        if not self.config.get('overlay_enabled', False):
+        style = self.config.get('overlay_style', 'translucent')
+        if style == 'off':
             return
         overlay_bin = paths.bundle_resources_dir() / 'overlay'
         if not overlay_bin.exists():
             log("  Overlay binary not found — run: swiftc overlay.swift -o overlay -parse-as-library -framework SwiftUI -framework AppKit -O")
             return
         args = [str(overlay_bin)]
-        if not self.config.get('overlay_translucent', True):
+        if style == 'solid':
             args.append('--solid')
         self._overlay_proc = subprocess.Popen(
             args,
@@ -846,15 +862,10 @@ class OpenWhisper:
             self._trigger_keys = {KEY_MAP[p] for p in new_config['trigger_key'].split('+')}
             self._combo_held.clear()
 
-        if new_config['overlay_enabled'] != old['overlay_enabled']:
-            if new_config['overlay_enabled']:
-                self._start_overlay()
-            else:
+        if new_config['overlay_style'] != old['overlay_style']:
+            if self._overlay_proc is not None:
                 self._stop_overlay()
-        elif (new_config['overlay_enabled']
-              and new_config['overlay_translucent'] != old['overlay_translucent']):
-            self._stop_overlay()
-            self._start_overlay()
+            self._start_overlay()  # no-op when the new style is 'off'
 
         if new_config['transcription_model'] != old['transcription_model']:
             # Load the new model off-thread; ModelHolder swaps it in.
@@ -1757,7 +1768,7 @@ def main():
             emit_event("error", message=f"Whisper import failed: {e}")
             ok = False
 
-        if config.get('overlay_enabled', True):
+        if config.get('overlay_style', 'translucent') != 'off':
             overlay_bin = paths.bundle_resources_dir() / 'overlay'
             if not overlay_bin.exists():
                 log("  Overlay enabled but binary not found (run setup.sh).")
