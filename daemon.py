@@ -1643,8 +1643,7 @@ def check_accessibility():
             log("  the grant goes stale whenever the app is rebuilt/reinstalled.")
             emit_event(
                 "permission",
-                message=("Needs Accessibility permission — remove and re-add "
-                         "Open Whisper in System Settings > Accessibility"),
+                message="Accessibility needed — remove and re-add the app",
             )
             return False
     except ImportError:
@@ -1694,8 +1693,7 @@ def check_microphone():
             log("  Grant access: System Settings > Privacy & Security > Microphone")
             emit_event(
                 "permission",
-                message=("Needs Microphone permission — enable Open Whisper in "
-                         "System Settings > Microphone"),
+                message="Microphone permission needed — see System Settings",
             )
             return False
     except Exception:

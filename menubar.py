@@ -891,10 +891,10 @@ class OpenWhisperMenuBar(rumps.App):
                 # A persistent alert (e.g. denied permission) wins over any
                 # transient status update — those would otherwise mask the
                 # underlying problem after one normal-looking line.
-                if self._persistent_alert:
-                    self.status_item.title = self._persistent_alert
-                else:
-                    self.status_item.title = update['text']
+                # Cap length either way: a long single-line status would
+                # stretch the whole menu (same 60-char cap as transcripts).
+                text = self._persistent_alert or update['text']
+                self.status_item.title = truncate_smart(text, 60)
             elif action == 'last_text':
                 text = update['text']
                 self._last_transcription = text
