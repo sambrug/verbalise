@@ -696,8 +696,11 @@ class OpenWhisperMenuBar(rumps.App):
             trigger_menu.add(item)
 
         # --- Advanced submenu ---
+        # Grouped by concern: recognition (what you say becomes text),
+        # then input/output behaviour, then feedback, then info/maintenance.
         advanced_menu = rumps.MenuItem("Advanced")
 
+        # Recognition ---------------------------------------------------
         # Transcription model submenu — title shows the active model.
         self.transcription_items = {}
         active_model_label = TRANSCRIPTION_MODELS.get(transcription_model, transcription_model)
@@ -712,6 +715,30 @@ class OpenWhisperMenuBar(rumps.App):
             transcription_menu.add(item)
         advanced_menu.add(transcription_menu)
 
+        # Vocabulary editor — title shows the current term count.
+        vocab_count = len(cfg.get('vocabulary', []) or [])
+        vocab_label = "Vocabulary…" if vocab_count == 0 else f"Vocabulary… ({vocab_count})"
+        self.vocabulary_item = rumps.MenuItem(vocab_label, callback=self.set_vocabulary)
+        advanced_menu.add(self.vocabulary_item)
+
+        # Phonetic corrections — exact word replacements applied after
+        # transcription, for stubborn mishearings that vocabulary biasing
+        # alone can't fix (e.g. Whisper hearing "FNOL" as "ethanol").
+        corrections_count = len(cfg.get('phonetic_corrections', {}) or {})
+        corrections_label = ("Phonetic Corrections…" if corrections_count == 0
+                             else f"Phonetic Corrections… ({corrections_count})")
+        self.phonetic_corrections_item = rumps.MenuItem(
+            corrections_label, callback=self.set_phonetic_corrections
+        )
+        advanced_menu.add(self.phonetic_corrections_item)
+
+        self.streaming_item = rumps.MenuItem("Streaming Transcribe", callback=self.toggle_streaming)
+        self.streaming_item.state = 1 if streaming_enabled else 0
+        advanced_menu.add(self.streaming_item)
+
+        advanced_menu.add(None)  # separator
+
+        # Input / output -------------------------------------------------
         # Input device submenu — title shows the active device.
         self.input_device_items = {}
         current_device = cfg.get('input_device')
@@ -733,37 +760,13 @@ class OpenWhisperMenuBar(rumps.App):
                 input_device_menu.add(item)
         advanced_menu.add(input_device_menu)
 
-        # Vocabulary editor — title shows the current term count.
-        vocab_count = len(cfg.get('vocabulary', []) or [])
-        vocab_label = "Vocabulary…" if vocab_count == 0 else f"Vocabulary… ({vocab_count})"
-        self.vocabulary_item = rumps.MenuItem(vocab_label, callback=self.set_vocabulary)
-        advanced_menu.add(self.vocabulary_item)
-
-        # Phonetic corrections — exact word replacements applied after
-        # transcription, for stubborn mishearings that vocabulary biasing
-        # alone can't fix (e.g. Whisper hearing "FNOL" as "ethanol").
-        corrections_count = len(cfg.get('phonetic_corrections', {}) or {})
-        corrections_label = ("Phonetic Corrections…" if corrections_count == 0
-                             else f"Phonetic Corrections… ({corrections_count})")
-        self.phonetic_corrections_item = rumps.MenuItem(
-            corrections_label, callback=self.set_phonetic_corrections
-        )
-        advanced_menu.add(self.phonetic_corrections_item)
-
-        advanced_menu.add(None)  # separator
-
-        self.streaming_item = rumps.MenuItem("Streaming Transcribe", callback=self.toggle_streaming)
-        self.streaming_item.state = 1 if streaming_enabled else 0
-        advanced_menu.add(self.streaming_item)
-
         self.fast_typing_item = rumps.MenuItem("Fast Typing", callback=self.toggle_fast_typing)
         self.fast_typing_item.state = 1 if fast_typing_enabled else 0
         advanced_menu.add(self.fast_typing_item)
 
-        self.sound_item = rumps.MenuItem("Sound Feedback", callback=self.toggle_sound)
-        self.sound_item.state = 1 if sound_enabled else 0
-        advanced_menu.add(self.sound_item)
+        advanced_menu.add(None)  # separator
 
+        # Feedback --------------------------------------------------------
         self.overlay_item = rumps.MenuItem("Overlay", callback=self.toggle_overlay)
         self.overlay_item.state = 1 if overlay_enabled else 0
         advanced_menu.add(self.overlay_item)
@@ -774,8 +777,13 @@ class OpenWhisperMenuBar(rumps.App):
         self.overlay_translucent_item.state = 1 if overlay_translucent else 0
         advanced_menu.add(self.overlay_translucent_item)
 
+        self.sound_item = rumps.MenuItem("Sound Feedback", callback=self.toggle_sound)
+        self.sound_item.state = 1 if sound_enabled else 0
+        advanced_menu.add(self.sound_item)
+
         advanced_menu.add(None)  # separator
 
+        # Info / maintenance ----------------------------------------------
         self.stats_item = rumps.MenuItem(format_stats(load_stats()))
         self.stats_item.set_callback(None)
         advanced_menu.add(self.stats_item)

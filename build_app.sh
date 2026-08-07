@@ -79,6 +79,19 @@ cd "$SCRIPT_DIR"
 echo "==> Post-processing bundle..."
 chmod +x "$DIST_APP/Contents/Resources/overlay"
 
+# Sign with the machine's stable local identity when it exists, so TCC
+# permissions (Accessibility etc.) survive reinstalls. Created by
+# scripts/create-signing-cert.sh (make signing-cert) — once per machine.
+SIGN_IDENTITY="Open Whisper Dev"
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_IDENTITY"; then
+    echo "==> Signing bundle as '$SIGN_IDENTITY'..."
+    codesign --force --deep --sign "$SIGN_IDENTITY" "$DIST_APP"
+else
+    echo "⚠️  No '$SIGN_IDENTITY' signing identity found — bundle stays ad-hoc"
+    echo "   signed, so Accessibility must be re-granted after every install."
+    echo "   Fix once per machine with:  make signing-cert"
+fi
+
 # Print summary
 echo
 echo "================================================================"

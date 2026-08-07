@@ -4,12 +4,13 @@
 # operations are short to type. The scripts themselves stay the source
 # of truth — run them directly if you want full output.
 
-.PHONY: help app app-dev app-clean install dev-setup overlay test
+.PHONY: help app app-dev app-clean install dev-setup overlay test signing-cert
 
 help:
 	@echo "Open Whisper — make targets:"
 	@echo ""
 	@echo "  make test         Run the recording-lifecycle recovery tests"
+	@echo "  make signing-cert Create the per-machine code-signing certificate (once)"
 	@echo "  make dev-setup    Install Python deps + build overlay (source-run mode)"
 	@echo "  make overlay      Recompile the Swift overlay binary only"
 	@echo "  make app          Build a self-contained dist/Open\\ Whisper.app (release)"
@@ -20,6 +21,9 @@ help:
 
 test:
 	.venv/bin/python3 tests/test_recovery.py
+
+signing-cert:
+	./scripts/create-signing-cert.sh
 
 dev-setup:
 	./setup.sh

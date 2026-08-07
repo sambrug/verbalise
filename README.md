@@ -2,7 +2,23 @@
 
 Local SuperWhisper-like voice dictation for macOS. Hold a key to speak, release to have text appear at your cursor.
 
-Runs entirely on-device using MLX Whisper on Apple Silicon GPU. No API keys, no network calls after the one-time model download.
+Runs entirely on-device using MLX Whisper on Apple Silicon GPU. No accounts, no API keys, and no network traffic after the one-time model download.
+
+## Features
+
+- **Hold-to-dictate anywhere** - hold a trigger key (default Right Shift; any modifier key or combo), speak, release. The transcript is typed into whatever app has focus.
+- **Streaming transcription** - long dictations are transcribed chunk by chunk at natural pauses while you're still speaking, so the wait after release stays at a second or two regardless of how long you talked. If a chunk fails, the whole recording is re-transcribed in one pass so nothing is lost.
+- **Fully on-device** - audio never leaves the Mac. Eight Whisper model options from `tiny` to `large`, with `turbo` as the default sweet spot.
+- **Custom vocabulary** - a list of domain terms (acronyms, names, jargon) that Whisper is biased towards recognising.
+- **Phonetic corrections** - whole-word replacements applied after transcription for stubborn mishearings (e.g. `ethanol => FNOL`).
+- **Hallucination filtering** - Whisper's silence artefacts ("thanks for watching", trailing ellipses, stuck-word repetition loops) are stripped before typing.
+- **Smart typing** - short transcripts are injected as keystrokes (clipboard untouched); long ones paste via the clipboard with your previous clipboard verified and restored afterwards. Both paths refuse to paste the wrong thing if the clipboard is hijacked mid-flight.
+- **Floating pill overlay** - a Liquid Glass pill shows a live waveform and timer while recording, and a pulse while transcribing.
+- **Recent transcripts** - the last 10 dictations with timestamps, one click to copy. Lifetime word/recording stats.
+- **Idle memory release** - the Whisper model unloads from GPU memory (~1.5GB) after a configurable idle period and rewarms in the background while you speak on the next dictation.
+- **Live settings** - menu changes apply to the running daemon in under a second; the model stays loaded. No restarts.
+- **Self-healing** - a supervisor auto-restarts the daemon with backoff if it dies; watchdogs recover from wedged audio devices, missed key releases, and dead microphones. Escape cancels a recording or force-resets a stalled one.
+- **Launch at Login** - one menu toggle, registered natively with macOS.
 
 ## Quick Start
 
@@ -20,24 +36,34 @@ Runs entirely on-device using MLX Whisper on Apple Silicon GPU. No API keys, no 
 
 ## How a dictation flows
 
-Hold the trigger key: audio records and a floating pill shows a live waveform. While you're still speaking, long dictations are transcribed in the background chunk by chunk at natural pauses (streaming transcribe), so the wait after release stays short no matter how long you talk. On release, the last chunk is transcribed, trailing hallucinations ("thanks for watching", stray ellipses) are stripped, phonetic corrections are applied, and the text is typed at your cursor - short text as direct keystrokes, long text via a clipboard paste that restores your previous clipboard afterwards.
+Hold the trigger key: audio records and the pill shows a live waveform. While you speak, the streaming watcher looks for pauses of 400ms or more after at least 2 seconds of speech, slices completed chunks off and transcribes them in the background. On release, only the leftover tail needs transcribing. Hallucinations are stripped, phonetic corrections applied, and the text lands at your cursor. Recordings shorter than `min_duration` or containing only silence are discarded quietly.
 
-## Menu Options
+## The Menu
 
-- **Status** - current state, including the trigger key when ready
+Top level:
+
+- **Status** - current state, including the trigger key when ready. Pins an actionable message if something is blocking (e.g. a permission problem)
 - **Last transcription** - click to copy to clipboard
-- **Recent Transcripts** - last 10 transcripts with timestamps, click any to copy
-- **Restart** - restart the daemon
-- **Trigger Key** - single key or combo (e.g. Right Option + Right Shift)
-- **Launch at Login** - register the app as a login item (shown when running the built app)
-- **Advanced** - transcription model picker, input device, vocabulary, phonetic corrections, toggles, stats
-- **Quit Open Whisper**
+- **Recent Transcripts** - last 10 with timestamps, click any to copy; Clear History
+- **Restart** - hard-restart the daemon (settings changes don't need this)
+- **Trigger Key** - single key or combo
+- **Launch at Login** - toggle (shown when running the built app)
+- **Advanced** / **Quit Open Whisper**
 
-Menu changes apply live - the daemon re-reads its config in place, so the speech model stays loaded and settings land instantly.
+Advanced, grouped by concern:
+
+| Group | Items |
+|-------|-------|
+| Recognition | Transcription Model, Vocabulary…, Phonetic Corrections…, Streaming Transcribe |
+| Input / output | Input Device, Fast Typing |
+| Feedback | Overlay, Translucent Overlay, Sound Feedback |
+| Info | Stats (words and recordings), Open Config, View Logs |
+
+Every change applies live via a config reload - the daemon keeps running and the model stays warm.
 
 ## Configuration
 
-Config lives at `~/Library/Application Support/Open Whisper/config.yaml` (open it via Advanced > Open Config). Most settings are also in the menu.
+Config lives at `~/Library/Application Support/Open Whisper/config.yaml` (Advanced > Open Config). Most settings are also in the menu.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -48,25 +74,23 @@ Config lives at `~/Library/Application Support/Open Whisper/config.yaml` (open i
 | `max_duration` | `300` | Maximum recording length - auto-stops at this limit (seconds) |
 | `release_delay` | `0.05` | Pause after key release before pasting (seconds) |
 | `sample_rate` | `16000` | Audio sample rate |
-| `sound_enabled` | `false` | Audio feedback on record start/stop |
-| `overlay_enabled` | `true` | Show floating Liquid Glass overlay while recording/processing |
-| `overlay_translucent` | `true` | Translucent (Liquid Glass) overlay vs solid capsule |
-| `vocabulary` | `[]` | Domain terms (acronyms, names) to bias Whisper recognition |
-| `phonetic_corrections` | `{}` | Whole-word replacements applied after transcription (e.g. `ethanol: FNOL`) |
+| `sound_enabled` | `false` | Tink/pop sounds on record start/stop |
+| `overlay_enabled` | `true` | Show the floating pill while recording/processing |
+| `overlay_translucent` | `true` | Liquid Glass pill vs solid capsule |
+| `vocabulary` | `[]` | Domain terms to bias Whisper recognition |
+| `phonetic_corrections` | `{}` | Whole-word replacements applied after transcription |
 | `input_device` | `null` | Audio input device name; `null` uses system default |
 
-### Advanced
-
-Under `advanced:` in `config.yaml`:
+Under `advanced:`:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `trim_silence_enabled` | `true` | Trims leading/trailing silence before transcription |
-| `streaming_transcribe_enabled` | `true` | Transcribes audio in chunks at silence gaps while you speak, so post-release latency stays flat |
-| `model_idle_unload_minutes` | `120` | Unload the Whisper model from GPU memory (~1.5GB) after this long without a dictation; it reloads while you speak on the next one. `0` keeps it loaded forever |
-| `fast_typing_enabled` | `true` | Inject short transcripts via Quartz unicode events instead of clipboard paste |
-| `fast_typing_max_chars` | `80` | Length threshold for the unicode-event typing path |
-| `clipboard_restore_delay` | `1.5` | Seconds the dictation stays on the clipboard after a paste before your previous clipboard is restored. Raise it if a slow app still pastes your old clipboard; set `0` to never restore |
+| `trim_silence_enabled` | `true` | Trim leading/trailing silence before transcription (single-pass mode) |
+| `streaming_transcribe_enabled` | `true` | Transcribe in chunks at silence gaps while you speak |
+| `model_idle_unload_minutes` | `120` | Unload the Whisper model from GPU memory after this long without a dictation; reloads while you speak on the next one. `0` keeps it loaded forever |
+| `fast_typing_enabled` | `true` | Inject short transcripts as unicode keystrokes instead of clipboard paste |
+| `fast_typing_max_chars` | `80` | Length threshold for the keystroke path |
+| `clipboard_restore_delay` | `1.5` | Seconds the dictation stays on the clipboard after a paste before your previous clipboard is restored. Raise it if a slow app still pastes your old clipboard; `0` never restores |
 
 ## Trigger Keys
 
@@ -77,27 +101,23 @@ Combos - join with `+`:
 trigger_key: alt_r+shift_r   # Right Option + Right Shift
 ```
 
-## Floating Overlay (Liquid Glass)
-
-A floating pill appears at the bottom of the screen while recording and processing. Recording shows a live waveform with a `0:05`-style timer; processing shows a sine-pulse. Disable via the **Overlay** toggle in Advanced; switch to a solid variant via **Translucent Overlay**.
-
-The overlay is built from `overlay.swift` and compiled by `setup.sh` (requires Xcode Command Line Tools: `xcode-select --install`).
-
 ## Logs & Troubleshooting
 
-Logs are written to `~/Library/Logs/Open Whisper/daemon.log`. Use **View Logs** in the menu to tail them live.
+Logs are written to `~/Library/Logs/Open Whisper/daemon.log` (rotated at 10MB). Use **View Logs** in the menu to tail them live.
 
 ```
 [14:32:01] Recording...
-[14:32:05] Transcribing 4.2s | whisper=turbo
+[14:32:03] Streaming chunk 0: 2.8s
+[14:32:05] Streaming finalize: 4.2s in 2 chunk(s) | whisper=turbo
 [14:32:05] Raw (14w): I was thinking we should look at the login page
-[14:32:06] Done: record=4.2s transcribe=1.1s total=1.2s
+[14:32:06] Done: record=4.2s transcribe=0.4s total=0.5s
 ```
 
 - **Stuck on Loading** - Whisper model downloading for the first time (requires internet).
-- **Recording but no text** - Microphone permission not granted. Check System Settings > Privacy & Security > Microphone.
+- **Recording but no text** - Microphone permission not granted.
 - **Recording won't stop / pill stuck** - press Escape; the daemon force-resets and stays usable.
-- **"Needs Accessibility permission" after reinstalling** - macOS ties the grant to the exact build, so replacing the app invalidates it even though the toggle still shows on. Remove Open Whisper from System Settings > Privacy & Security > Accessibility and re-add it.
+- **"Needs Accessibility permission" after reinstalling** - the build wasn't signed with the local certificate (see Development), so macOS voided the grant. Remove Open Whisper from System Settings > Privacy & Security > Accessibility and re-add it, then run `make signing-cert` so it doesn't happen again.
+- **First dictation after hours idle feels slow** - that's the model rewarming (status shows "waking speech model"); it loads while you speak.
 
 Run non-interactive startup checks (config, permissions, key imports):
 ```bash
@@ -106,31 +126,43 @@ python daemon.py --check
 
 ## Development
 
+One-time setup per machine:
+
 ```bash
-./setup.sh                 # venv + dependencies + overlay binary
-make test                  # recording-lifecycle and streaming tests
-.venv/bin/python3 menubar.py   # run from source
-make app                   # build dist/Open Whisper.app (py2app, self-contained)
-make install               # copy it to /Applications (sudo)
-./install-login-item.sh    # start automatically on login
+./setup.sh            # venv + dependencies + overlay binary
+make signing-cert     # local code-signing certificate (see below)
 ```
+
+Iterate and release:
+
+```bash
+make test                       # recording-lifecycle and streaming tests
+.venv/bin/python3 menubar.py    # run from source
+make app                        # build dist/Open Whisper.app (py2app, signed)
+make install                    # copy to /Applications (sudo)
+```
+
+### Code signing
+
+macOS ties Accessibility grants to the app's code signature, and unsigned builds get a new throwaway signature every time - so without signing, every reinstall voids the permission. `make signing-cert` creates a free self-signed certificate ("Open Whisper Dev") in the Mac's login Keychain, and `build_app.sh` signs every build with it, so rebuilds keep their permissions. The certificate is per-machine: after cloning the repo on a new Mac, run `make signing-cert` once and grant permissions once. It has no authority beyond the Mac it was created on - this app is not distributable to other people's machines without proper Apple notarisation.
 
 ## Project Structure
 
 ```
 open-whisper/
-├── daemon.py               # Core daemon: recording, transcription, typing
-├── menubar.py              # Menu bar UI (rumps) + daemon supervisor
-├── paths.py                # State/log/resource path helpers
-├── overlay.swift           # Floating Liquid Glass overlay (SwiftUI)
-├── assets/                 # App icon (.icns + source PNG)
-├── SVG icons for menu bar/ # Menu bar template icons
-├── tests/test_recovery.py  # Lifecycle recovery + streaming tests
-├── config.example.yaml     # Template config, seeded on first run
-├── setup.sh                # Dev setup (venv + overlay)
-├── build_app.sh / setup.py # py2app build
-├── create_icon.py          # Regenerate assets/AppIcon.icns (needs pillow)
-└── install-login-item.sh   # Register the installed app as a login item
+├── daemon.py                    # Core daemon: recording, transcription, typing
+├── menubar.py                   # Menu bar UI (rumps) + daemon supervisor
+├── paths.py                     # State/log/resource path helpers
+├── overlay.swift                # Floating Liquid Glass overlay (SwiftUI)
+├── assets/                      # App icon (.icns + source PNG)
+├── SVG icons for menu bar/      # Menu bar template icons
+├── scripts/create-signing-cert.sh  # Per-machine signing certificate setup
+├── tests/test_recovery.py       # Lifecycle recovery + streaming tests
+├── config.example.yaml          # Template config, seeded on first run
+├── setup.sh                     # Dev setup (venv + overlay)
+├── build_app.sh / setup.py      # py2app build + signing
+├── create_icon.py               # Regenerate assets/AppIcon.icns (needs pillow)
+└── install-login-item.sh        # Legacy login-item script (menu toggle preferred)
 ```
 
-Runtime state lives in `~/Library/Application Support/Open Whisper/` (config, recent transcripts, stats) and logs in `~/Library/Logs/Open Whisper/`.
+Runtime state lives in `~/Library/Application Support/Open Whisper/` (config, transcript history, stats) and logs in `~/Library/Logs/Open Whisper/`.
