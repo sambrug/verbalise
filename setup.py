@@ -112,10 +112,22 @@ OPTIONS = {
     'optimize': 0,
     # py2app sometimes complains about pyobjc subpackages it can't trace;
     # this short-circuits the warning for ones we know are safe.
+    #
+    # `torch` (and its own dependency `sympy`) is ~530MB of the bundle for
+    # zero runtime benefit: mlx_whisper declares torch as a pip dependency
+    # only for mlx_whisper/torch_whisper.py, a PyTorch reference/conversion
+    # implementation that nothing in mlx_whisper's actual transcribe path
+    # (transcribe.py / decoding.py / load_models.py / audio.py) imports,
+    # and that we never touch either. Listing `mlx_whisper` under `packages`
+    # above makes py2app vendor the package whole, so without this exclude
+    # it drags torch_whisper.py — and therefore torch — along for the ride.
     'excludes': [
         'tkinter',
         'PyQt5', 'PyQt6', 'PySide2', 'PySide6',
         'pytest', 'sphinx',
+        # `sympy` is only required-by torch (nothing else imports it — checked),
+        # so it has to be excluded alongside torch itself, not just torch.
+        'torch', 'torchvision', 'torchaudio', 'sympy',
     ],
 }
 
