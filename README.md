@@ -56,7 +56,7 @@ Settings, grouped by concern:
 | Recognition | Transcription Model, Vocabulary, Phonetic Corrections, Streaming Transcribe |
 | Input / output | Input Device, Fast Typing |
 | Feedback | Overlay (Off / Solid / Translucent), Sound Feedback |
-| Info | Lifetime words and recordings, Open Config, View Logs |
+| Info | Lifetime words and recordings, time saved typing, Open Config, View Logs |
 
 Pickers show the current choice as a tick inside the submenu; Vocabulary and Phonetic Corrections show their counts as right-aligned badges. Hovering most Settings items shows a tooltip explaining what they do.
 

@@ -277,6 +277,16 @@ def _set_tooltip(item, text):
     item._menuitem.setToolTip_(text)
 
 
+def _set_hidden(item, hidden):
+    """Show or hide a rumps MenuItem in place.
+
+    Same reasoning as _set_tooltip — rumps can add and remove items but not
+    hide one, and removing would lose its position in the menu. Hiding keeps
+    the row's slot so it can reappear once there's something to show.
+    """
+    item._menuitem.setHidden_(bool(hidden))
+
+
 def format_transcript_ts(ts_str):
     """Short human timestamp for a recent-transcript entry.
 
@@ -650,6 +660,37 @@ def format_stats(usage):
     return f"{words:,} words • {recs:,} recordings"
 
 
+# Rates behind the "time saved typing" line. Both are fixed on purpose: this
+# is a fun stat rather than a measurement, and deriving it from the word count
+# alone means it works on stats files recorded long before the line existed.
+# 40wpm is the conventional average-adult typing speed; 150wpm is a
+# comfortable speaking pace.
+TYPING_WPM = 40
+SPEAKING_WPM = 150
+
+
+def format_time_saved(usage):
+    """Format the time-saved line, or None when there's nothing to show yet.
+
+    Saved time is how long the words would have taken to type, less how long
+    they'd take to say. It ignores time spent fixing misrecognitions, so treat
+    it as indicative rather than a real productivity measure.
+    """
+    words = usage.get('total_words', 0)
+    if words <= 0:
+        return None
+    saved_minutes = words * (1 / TYPING_WPM - 1 / SPEAKING_WPM)
+    if saved_minutes < 1:
+        return None
+    if saved_minutes < 60:
+        minutes = round(saved_minutes)
+        unit = "minute" if minutes == 1 else "minutes"
+        return f"{minutes} {unit} saved typing"
+    hours = round(saved_minutes / 60)
+    unit = "hour" if hours == 1 else "hours"
+    return f"{hours} {unit} saved typing"
+
+
 def load_config():
     with open(CONFIG_PATH) as f:
         return yaml.safe_load(f)
@@ -866,9 +907,21 @@ class OpenWhisperMenuBar(rumps.App):
         settings_menu.add(None)  # separator
 
         # Info / maintenance ----------------------------------------------
-        self.stats_item = rumps.MenuItem(format_stats(load_stats()))
+        stats = load_stats()
+        self.stats_item = rumps.MenuItem(format_stats(stats))
         self.stats_item.set_callback(None)
         settings_menu.add(self.stats_item)
+
+        # Second stats line. Hidden rather than omitted when there's nothing
+        # to show yet, so it can appear after the first dictation without
+        # rebuilding the menu.
+        self.time_saved_item = rumps.MenuItem("")
+        self.time_saved_item.set_callback(None)
+        _set_tooltip(self.time_saved_item,
+                     f"How long these words would take to type at {TYPING_WPM}wpm, "
+                     f"less how long they'd take to say. Just for fun.")
+        settings_menu.add(self.time_saved_item)
+        self._refresh_time_saved(stats)
 
         settings_menu.add(None)  # separator
 
@@ -951,10 +1004,20 @@ class OpenWhisperMenuBar(rumps.App):
             elif action == 'stats':
                 usage = update.get('usage') or load_stats()
                 self.stats_item.title = format_stats(usage)
+                self._refresh_time_saved(usage)
 
         # Runs every timer firing (not just when the queue had something),
         # so the scroll keeps moving even while nothing new comes in.
         self._tick_alert_scroll()
+
+    def _refresh_time_saved(self, usage):
+        """Update the time-saved line, hiding it when there's nothing to show."""
+        label = format_time_saved(usage)
+        if label is None:
+            _set_hidden(self.time_saved_item, True)
+            return
+        self.time_saved_item.title = label
+        _set_hidden(self.time_saved_item, False)
 
     def _ensure_alert_scroll(self, text):
         """(Re)start the ping-pong scroll for an oversized persistent alert.
