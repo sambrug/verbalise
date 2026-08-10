@@ -42,7 +42,7 @@ Hold the trigger key: audio records and the pill shows a live waveform. While yo
 
 Top level:
 
-- **Status** - current state, including the trigger key when ready. Pins an actionable message if something is blocking (e.g. a permission problem)
+- **Status** - current state, including the trigger key when ready. Pins an actionable message if something is blocking (e.g. a permission problem); a message too long for one line scrolls instead of getting cut off
 - **Last transcription** - click to copy to clipboard
 - **Recent Transcripts** - last 10 with timestamps, click any to copy; Clear History
 - **Restart** - hard-restart the daemon (settings changes don't need this)

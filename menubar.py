@@ -302,6 +302,14 @@ MENUBAR_ICON_FILE = 'waveform.svg'
 # Fallback unicode glyph if the SVG can't be loaded as a template image.
 MENUBAR_ICON_FALLBACK = '\U0001F399'
 
+# Single-line cap for the status/last-transcription menu rows — long text
+# would stretch the whole dropdown. Persistent alerts that don't fit
+# scroll instead of truncating (see _tick_alert_scroll); everything else
+# just gets an ellipsis via truncate_smart.
+STATUS_MAX_CHARS = 60
+ALERT_SCROLL_STEP_TICKS = 2   # advance one character every N status-timer ticks
+ALERT_SCROLL_PAUSE_TICKS = 6  # ticks to hold at each end before reversing
+
 # Status display text. 'ready' is built dynamically from the configured
 # trigger key — see OpenWhisperMenuBar._ready_label.
 STATUS_LABELS = {
@@ -679,6 +687,10 @@ class OpenWhisperMenuBar(rumps.App):
         # dropdown status text shows this string instead of whatever
         # transient update most recently fired.
         self._persistent_alert = None
+        # Ping-pong scroll state for a persistent alert too long to fit
+        # STATUS_MAX_CHARS in one line; None when nothing is scrolling.
+        # See _ensure_alert_scroll / _tick_alert_scroll.
+        self._scroll_state = None
         self._log_file = None
         self._daemon_exit_lock = threading.Lock()
         # --- Daemon supervisor state ---
@@ -919,14 +931,19 @@ class OpenWhisperMenuBar(rumps.App):
                 # A persistent alert (e.g. denied permission) wins over any
                 # transient status update — those would otherwise mask the
                 # underlying problem after one normal-looking line.
-                # Cap length either way: a long single-line status would
-                # stretch the whole menu (same 60-char cap as transcripts).
                 text = self._persistent_alert or update['text']
-                self.status_item.title = truncate_smart(text, 60)
+                if self._persistent_alert and len(text) > STATUS_MAX_CHARS:
+                    # Too long for one line and important enough to show in
+                    # full — scroll it instead of truncating. _tick_alert_scroll
+                    # (called below on every timer firing) paints it.
+                    self._ensure_alert_scroll(text)
+                else:
+                    self._scroll_state = None
+                    self.status_item.title = truncate_smart(text, STATUS_MAX_CHARS)
             elif action == 'last_text':
                 text = update['text']
                 self._last_transcription = text
-                self.last_text_item.title = f"\"{truncate_smart(text, 60)}\""
+                self.last_text_item.title = f"\"{truncate_smart(text, STATUS_MAX_CHARS)}\""
                 # Refresh recent-transcripts submenu from disk (daemon writes
                 # the file just before emitting last_text).
                 self._recent_transcripts = load_recent_transcripts()
@@ -934,6 +951,48 @@ class OpenWhisperMenuBar(rumps.App):
             elif action == 'stats':
                 usage = update.get('usage') or load_stats()
                 self.stats_item.title = format_stats(usage)
+
+        # Runs every timer firing (not just when the queue had something),
+        # so the scroll keeps moving even while nothing new comes in.
+        self._tick_alert_scroll()
+
+    def _ensure_alert_scroll(self, text):
+        """(Re)start the ping-pong scroll for an oversized persistent alert.
+
+        A no-op if we're already mid-scroll on this exact message, so a
+        repeated identical status update doesn't reset the animation.
+        """
+        if self._scroll_state and self._scroll_state['text'] == text:
+            return
+        self._scroll_state = {'text': text, 'pos': 0, 'dir': 1, 'pause': 0, 'ticks': 0}
+
+    def _tick_alert_scroll(self):
+        """Advance the scroll window by one character, bouncing at each end.
+
+        Only does anything while `_scroll_state` is set — i.e. while a
+        persistent alert is both active and too long for one line. Driven
+        by the same 0.2s status timer as everything else, so no extra
+        timer to manage.
+        """
+        state = self._scroll_state
+        if not state:
+            return
+        text = state['text']
+        state['ticks'] += 1
+        if state['ticks'] >= ALERT_SCROLL_STEP_TICKS:
+            state['ticks'] = 0
+            if state['pause'] > 0:
+                state['pause'] -= 1
+            else:
+                max_pos = len(text) - STATUS_MAX_CHARS
+                state['pos'] += state['dir']
+                if state['pos'] >= max_pos:
+                    state['pos'], state['dir'] = max_pos, -1
+                    state['pause'] = ALERT_SCROLL_PAUSE_TICKS
+                elif state['pos'] <= 0:
+                    state['pos'], state['dir'] = 0, 1
+                    state['pause'] = ALERT_SCROLL_PAUSE_TICKS
+        self.status_item.title = text[state['pos']:state['pos'] + STATUS_MAX_CHARS]
 
     def _rebuild_recent_transcripts_menu(self):
         """Rebuild the Recent Transcripts submenu from self._recent_transcripts."""
@@ -1169,6 +1228,7 @@ class OpenWhisperMenuBar(rumps.App):
         """
         if self._persistent_alert is not None:
             self._persistent_alert = None
+            self._scroll_state = None
             self._queue_status(self._ready_label())
 
     def _queue_last_text(self, text):

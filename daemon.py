@@ -1643,7 +1643,7 @@ def check_accessibility():
             log("  the grant goes stale whenever the app is rebuilt/reinstalled.")
             emit_event(
                 "permission",
-                message="Accessibility needed — remove and re-add the app",
+                message="Remove & re-add Open Whisper in Settings ▸ Accessibility",
             )
             return False
     except ImportError:
