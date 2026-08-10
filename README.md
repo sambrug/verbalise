@@ -110,8 +110,15 @@ Logs are written to `~/Library/Logs/Open Whisper/daemon.log` (rotated at 10MB). 
 [14:32:03] Streaming chunk 0: 2.8s
 [14:32:05] Streaming finalize: 4.2s in 2 chunk(s) | whisper=turbo
 [14:32:05] Raw (14w): I was thinking we should look at the login page
-[14:32:06] Done: record=4.2s transcribe=0.4s total=0.5s
+[14:32:06] Done: record=4.2s transcribe=0.4s total=0.5s | compute=0.4s 10.5x realtime | peak GPU 2.5GB
 ```
+
+`transcribe` is the wait after you release the key; `compute` is total inference
+time, which with streaming mostly happened while you were still speaking.
+`Nx realtime` is audio seconds per second of inference — handy for comparing
+models on similar clips, though it drifts with clip length and how densely
+packed the speech is, so don't read too much into a single number. A cold start
+after the idle unload adds `cold load=Ns`.
 
 - **Stuck on Loading** - Whisper model downloading for the first time (requires internet).
 - **Recording but no text** - Microphone permission not granted.

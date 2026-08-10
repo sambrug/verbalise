@@ -224,6 +224,27 @@ def emit_event(event, **payload):
         pass
 
 
+def peak_gpu_memory_gb():
+    """Peak MLX (GPU) memory used since process start, in GB.
+
+    Returns None when MLX isn't loaded yet or the accessor has moved again —
+    this is log decoration, so it must never raise into the dictation path.
+    `mx.get_peak_memory` is the current spelling; `mx.metal.get_peak_memory`
+    is the deprecated pre-0.30 one, kept as a fallback.
+    """
+    try:
+        import mlx.core as mx
+        getter = getattr(mx, 'get_peak_memory', None)
+        if getter is None:
+            getter = mx.metal.get_peak_memory
+        gb = getter() / 1e9
+        # Before the model loads this reads as a few bytes, which would log
+        # as a meaningless "0.0GB". Treat anything that small as no reading.
+        return gb if gb >= 0.01 else None
+    except Exception:
+        return None
+
+
 def play_sound(name):
     """Play a macOS system sound non-blocking."""
     sounds = {
@@ -683,6 +704,18 @@ class OpenWhisper:
         self._last_activity = time.time()
         self._transcribe_lock = threading.Lock()
 
+        # Per-dictation compute accounting, for the realtime multiple on the
+        # "Done:" line. transcribe() runs on the streaming worker thread as
+        # well as the main thread, so the counters need their own lock —
+        # _transcribe_lock is held during inference and would serialise the
+        # bookkeeping behind it for no reason.
+        self._compute_lock = threading.Lock()
+        self._compute_seconds = 0.0
+        self._compute_audio_seconds = 0.0
+        # Wall-clock of the last model load, so a cold start after the idle
+        # unload is visible rather than being blamed on a slow transcription.
+        self._last_model_load_seconds = None
+
     def _start_overlay(self):
         """Spawn the overlay process if enabled and binary exists."""
         style = self.config.get('overlay_style', 'translucent')
@@ -777,6 +810,7 @@ class OpenWhisper:
         model = self.config['transcription_model']
         repo = MLX_MODELS[model]
         log(f"  Loading Whisper {model} into GPU memory...")
+        load_t0 = time.time()
         try:
             silent = np.zeros(self.sample_rate, dtype=np.float32)
             language = 'en' if model.startswith('distil-') else self.config['language']
@@ -784,7 +818,11 @@ class OpenWhisper:
                 mlx_whisper.transcribe(silent, path_or_hf_repo=repo, verbose=None, language=language)
             self._model_loaded = True
             self._last_activity = time.time()
-            log("  Whisper ready.")
+            load_elapsed = time.time() - load_t0
+            self._last_model_load_seconds = load_elapsed
+            peak_gb = peak_gpu_memory_gb()
+            peak_note = f" | peak GPU {peak_gb:.1f}GB" if peak_gb else ""
+            log(f"  Whisper ready in {load_elapsed:.1f}s{peak_note}")
         except Exception as e:
             # Full traceback at debug-level so future bundle-related failures
             # don't hide behind a one-line error string the way the SSL
@@ -1036,8 +1074,13 @@ class OpenWhisper:
         vocab = self.config.get('vocabulary', []) or []
         if vocab:
             kwargs['initial_prompt'] = "Vocabulary: " + ", ".join(vocab) + "."
+        compute_t0 = time.time()
         with self._transcribe_lock:
             result = mlx_whisper.transcribe(audio, **kwargs)
+        compute_elapsed = time.time() - compute_t0
+        with self._compute_lock:
+            self._compute_seconds += compute_elapsed
+            self._compute_audio_seconds += len(audio) / self.sample_rate
         self._model_loaded = True
         self._last_activity = time.time()
         text = result.get('text', '').strip()
@@ -1160,6 +1203,10 @@ class OpenWhisper:
         self._audio_blocks = []
         self._audio_total_samples = 0
         self._record_start_time = time.time()
+        with self._compute_lock:
+            self._compute_seconds = 0.0
+            self._compute_audio_seconds = 0.0
+        self._last_model_load_seconds = None
 
         max_dur = self.config.get('max_duration') or 0
         ceiling_seconds = min(
@@ -1515,7 +1562,25 @@ class OpenWhisper:
             log(f"Stats update failed: {e}")
 
         total_elapsed = time.time() - total_t0
-        log(f"Done: record={record_duration:.1f}s transcribe={transcribe_elapsed:.1f}s total={total_elapsed:.1f}s")
+        # Realtime multiple is audio seconds per second of actual inference —
+        # a fairer model-to-model comparison than raw seconds, though it still
+        # drifts with clip length and speech density. With streaming most of
+        # that compute already happened while the user was still talking,
+        # which is why it can exceed `transcribe` above.
+        with self._compute_lock:
+            compute_seconds = self._compute_seconds
+            compute_audio = self._compute_audio_seconds
+        speed_note = ""
+        if compute_seconds > 0 and compute_audio > 0:
+            speed_note = (f" | compute={compute_seconds:.1f}s "
+                          f"{compute_audio / compute_seconds:.1f}x realtime")
+        if self._last_model_load_seconds is not None:
+            speed_note += f" | cold load={self._last_model_load_seconds:.1f}s"
+        peak_gb = peak_gpu_memory_gb()
+        if peak_gb:
+            speed_note += f" | peak GPU {peak_gb:.1f}GB"
+        log(f"Done: record={record_duration:.1f}s transcribe={transcribe_elapsed:.1f}s "
+            f"total={total_elapsed:.1f}s{speed_note}")
 
         if self.config['sound_enabled']:
             play_sound('done')
