@@ -373,6 +373,26 @@ s.feed(np.zeros(16000, dtype='float32'))
 check("streaming: chunks join in feed order", s.drain() == ["one", "two"])
 check("streaming: no failure flagged", s.failed is False)
 
+# join_streaming_chunks: a chunk boundary cut mid-sentence typically lands
+# Whisper a spurious '.' on the first chunk with a lowercase continuation
+# right after — that combination should read as one flowing sentence.
+check("join chunks: spurious boundary period dropped before lowercase",
+      ow.join_streaming_chunks(["still talking.", "and continuing on"])
+      == "still talking and continuing on")
+check("join chunks: real sentence end kept before a capital",
+      ow.join_streaming_chunks(["First sentence.", "Second one starts here."])
+      == "First sentence. Second one starts here.")
+check("join chunks: no punctuation at the boundary is untouched",
+      ow.join_streaming_chunks(["one two", "three four"])
+      == "one two three four")
+check("join chunks: empty/blank chunks are skipped",
+      ow.join_streaming_chunks(["", "  ", "hello", "", "world"])
+      == "hello world")
+check("join chunks: single chunk passes through",
+      ow.join_streaming_chunks(["just one chunk."]) == "just one chunk.")
+check("join chunks: nothing but empty chunks joins to empty string",
+      ow.join_streaming_chunks(["", "  "]) == "")
+
 # A chunk that raises must flag the streamer as failed, not crash it.
 def _raising_transcribe(audio):
     raise RuntimeError("model fell over")

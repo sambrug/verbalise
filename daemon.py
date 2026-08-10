@@ -155,6 +155,35 @@ def clean_hallucinations(text):
         return ""
     return cleaned
 
+
+# Trailing sentence-ending punctuation (optionally followed by a closing
+# quote/bracket) at the very end of a string.
+_TRAILING_SENTENCE_END_RE = re.compile(r'[.!?]+([\'")\]]*)$')
+
+
+def join_streaming_chunks(chunks):
+    """Join per-chunk streaming transcripts into one continuous text.
+
+    Each chunk is transcribed independently, so Whisper has no idea a
+    chunk boundary sits mid-recording — it often closes a chunk with a
+    '.' purely because the audio was cut at a pause, not because the
+    speaker actually ended a sentence. It gets the next chunk's casing
+    right (no capital, since it's clearly a continuation) but leaves that
+    spurious full stop behind, e.g. "...still talking. and continuing on".
+    Drop the trailing sentence-ending punctuation at a chunk boundary
+    whenever the next chunk starts lowercase — that combination is a
+    reliable signal of a false split rather than a real sentence end.
+    """
+    parts = [c.strip() for c in chunks if c and c.strip()]
+    if not parts:
+        return ''
+    joined = parts[0]
+    for nxt in parts[1:]:
+        if nxt[:1].islower():
+            joined = _TRAILING_SENTENCE_END_RE.sub(r'\1', joined)
+        joined = f"{joined} {nxt}"
+    return joined
+
 # --- Key name mapping ---
 KEY_MAP = {
     'shift_r': keyboard.Key.shift_r,
@@ -1454,7 +1483,7 @@ class OpenWhisper:
                 # Clean each chunk individually — boundary silences are prime
                 # hallucination fodder for streaming.
                 cleaned_chunks = [clean_hallucinations(c) for c in chunks]
-                text = ' '.join(c for c in cleaned_chunks if c)
+                text = join_streaming_chunks(cleaned_chunks)
         else:
             log(f"Transcribing {audio_duration:.1f}s | whisper={whisper_model}")
             text = self.transcribe(audio)
