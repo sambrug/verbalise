@@ -267,6 +267,16 @@ def truncate_smart(text, max_len):
     return text[:cut].rstrip() + '…'
 
 
+def _set_tooltip(item, text):
+    """Attach a native hover tooltip to a rumps MenuItem.
+
+    rumps has no tooltip API of its own, but every MenuItem wraps a real
+    NSMenuItem (`._menuitem`), which does — so this drops straight to
+    AppKit rather than adding a wrapper class for one method call.
+    """
+    item._menuitem.setToolTip_(text)
+
+
 def format_transcript_ts(ts_str):
     """Short human timestamp for a recent-transcript entry.
 
@@ -719,11 +729,13 @@ class OpenWhisperMenuBar(rumps.App):
         self.login_item = None
         if IN_BUNDLE and SMAppService is not None:
             self.login_item = rumps.MenuItem("Launch at Login", callback=self.toggle_login_item)
+            _set_tooltip(self.login_item, "Starts automatically when you log in.")
 
         # Trigger key submenu — native style: plain title, the tick inside
         # carries the current choice (the ready status shows it anyway).
         self.trigger_items = {}
         trigger_menu = rumps.MenuItem("Trigger Key")
+        _set_tooltip(trigger_menu, "Key held to record; release to transcribe.")
         self.trigger_menu = trigger_menu
         for key, label in TRIGGER_KEYS.items():
             item = rumps.MenuItem(label, callback=self.set_trigger_key)
@@ -733,15 +745,23 @@ class OpenWhisperMenuBar(rumps.App):
             self.trigger_items[key] = item
             trigger_menu.add(item)
 
-        # --- Advanced submenu ---
-        # Grouped by concern: recognition (what you say becomes text),
-        # then input/output behaviour, then feedback, then info/maintenance.
-        advanced_menu = rumps.MenuItem("Advanced")
+        # --- Settings submenu ---
+        # Trigger Key and Launch at Login aren't things you change often,
+        # so they've moved off the top level and in here rather than
+        # getting their own permanent rows. No header for this first
+        # group, to match the unlabelled groups below it — just the
+        # items, then a separator into Recognition.
+        settings_menu = rumps.MenuItem("Settings")
+        settings_menu.add(trigger_menu)
+        if self.login_item is not None:
+            settings_menu.add(self.login_item)
+        settings_menu.add(None)  # separator
 
         # Recognition ---------------------------------------------------
         # Transcription model submenu — plain title, tick inside.
         self.transcription_items = {}
         transcription_menu = rumps.MenuItem("Transcription Model")
+        _set_tooltip(transcription_menu, "Whisper model size — bigger is slower but more accurate.")
         self.transcription_menu = transcription_menu
         for key, label in TRANSCRIPTION_MODELS.items():
             item = rumps.MenuItem(label, callback=self.set_transcription_model)
@@ -750,12 +770,13 @@ class OpenWhisperMenuBar(rumps.App):
                 item.state = 1
             self.transcription_items[key] = item
             transcription_menu.add(item)
-        advanced_menu.add(transcription_menu)
+        settings_menu.add(transcription_menu)
 
         # Vocabulary editor — term count shown as a native badge.
         self.vocabulary_item = rumps.MenuItem("Vocabulary", callback=self.set_vocabulary)
+        _set_tooltip(self.vocabulary_item, "Words Whisper should recognize more easily, like names or jargon.")
         set_count_badge(self.vocabulary_item, len(cfg.get('vocabulary', []) or []))
-        advanced_menu.add(self.vocabulary_item)
+        settings_menu.add(self.vocabulary_item)
 
         # Phonetic corrections — exact word replacements applied after
         # transcription, for stubborn mishearings that vocabulary biasing
@@ -763,21 +784,26 @@ class OpenWhisperMenuBar(rumps.App):
         self.phonetic_corrections_item = rumps.MenuItem(
             "Phonetic Corrections", callback=self.set_phonetic_corrections
         )
+        _set_tooltip(self.phonetic_corrections_item, "Replaces specific mishearings after transcription.")
         set_count_badge(self.phonetic_corrections_item,
                         len(cfg.get('phonetic_corrections', {}) or {}))
-        advanced_menu.add(self.phonetic_corrections_item)
+        settings_menu.add(self.phonetic_corrections_item)
 
         self.streaming_item = rumps.MenuItem("Streaming Transcribe", callback=self.toggle_streaming)
+        _set_tooltip(self.streaming_item,
+                     "Breaks long dictations into chunks to transcribe faster — "
+                     "can leave small artifacts at the seams.")
         self.streaming_item.state = 1 if streaming_enabled else 0
-        advanced_menu.add(self.streaming_item)
+        settings_menu.add(self.streaming_item)
 
-        advanced_menu.add(None)  # separator
+        settings_menu.add(None)  # separator
 
         # Input / output -------------------------------------------------
         # Input device submenu — plain title, tick inside.
         self.input_device_items = {}
         current_device = cfg.get('input_device')
         input_device_menu = rumps.MenuItem("Input Device")
+        _set_tooltip(input_device_menu, "Microphone used for recording.")
         self.input_device_menu = input_device_menu
         default_item = rumps.MenuItem("System Default", callback=self.set_input_device)
         default_item._device_name = None
@@ -793,13 +819,15 @@ class OpenWhisperMenuBar(rumps.App):
                 item.state = 1 if name == current_device else 0
                 self.input_device_items[name] = item
                 input_device_menu.add(item)
-        advanced_menu.add(input_device_menu)
+        settings_menu.add(input_device_menu)
 
         self.fast_typing_item = rumps.MenuItem("Fast Typing", callback=self.toggle_fast_typing)
+        _set_tooltip(self.fast_typing_item,
+                     "Inserts short transcripts directly instead of using the clipboard — quicker.")
         self.fast_typing_item.state = 1 if fast_typing_enabled else 0
-        advanced_menu.add(self.fast_typing_item)
+        settings_menu.add(self.fast_typing_item)
 
-        advanced_menu.add(None)  # separator
+        settings_menu.add(None)  # separator
 
         # Feedback --------------------------------------------------------
         # Overlay is a three-way pick (off / solid / translucent), replacing
@@ -807,6 +835,7 @@ class OpenWhisperMenuBar(rumps.App):
         # inert while the overlay itself was off.
         self.overlay_style_items = {}
         overlay_menu = rumps.MenuItem("Overlay")
+        _set_tooltip(overlay_menu, "Floating pill shown while recording and transcribing.")
         self.overlay_menu = overlay_menu
         for key, label in OVERLAY_STYLES.items():
             item = rumps.MenuItem(label, callback=self.set_overlay_style)
@@ -815,37 +844,36 @@ class OpenWhisperMenuBar(rumps.App):
                 item.state = 1
             self.overlay_style_items[key] = item
             overlay_menu.add(item)
-        advanced_menu.add(overlay_menu)
+        settings_menu.add(overlay_menu)
 
         self.sound_item = rumps.MenuItem("Sound Feedback", callback=self.toggle_sound)
+        _set_tooltip(self.sound_item, "Plays a sound when recording starts and stops.")
         self.sound_item.state = 1 if sound_enabled else 0
-        advanced_menu.add(self.sound_item)
+        settings_menu.add(self.sound_item)
 
-        advanced_menu.add(None)  # separator
+        settings_menu.add(None)  # separator
 
         # Info / maintenance ----------------------------------------------
         self.stats_item = rumps.MenuItem(format_stats(load_stats()))
         self.stats_item.set_callback(None)
-        advanced_menu.add(self.stats_item)
+        settings_menu.add(self.stats_item)
 
-        advanced_menu.add(None)  # separator
+        settings_menu.add(None)  # separator
 
-        advanced_menu.add(rumps.MenuItem("Open Config", callback=self.open_config))
-        advanced_menu.add(rumps.MenuItem("View Logs", callback=self.view_logs))
+        settings_menu.add(rumps.MenuItem("Open Config", callback=self.open_config))
+        settings_menu.add(rumps.MenuItem("View Logs", callback=self.view_logs))
+
+        restart_item = rumps.MenuItem("Restart", callback=self.restart_daemon)
+        _set_tooltip(restart_item, "Hard-restarts the daemon. Most settings apply without this.")
 
         self.menu = [
             self.status_item,
             self.last_text_item,
             self.recent_transcripts_menu,
             None,
-            rumps.MenuItem("Restart", callback=self.restart_daemon),
+            restart_item,
             None,
-            trigger_menu,
-            # NB: `is not None`, not truthiness — a childless rumps MenuItem
-            # is an empty dict subclass and evaluates False.
-            *([self.login_item] if self.login_item is not None else []),
-            None,
-            advanced_menu,
+            settings_menu,
             None,
             rumps.MenuItem("Quit Open Whisper", callback=self.quit_app),
         ]
