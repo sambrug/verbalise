@@ -434,6 +434,15 @@ def silence_gap_index(audio, sample_rate, start_index):
     return None
 
 
+class AudioStreamUnavailable(RuntimeError):
+    """Opening the input stream blocked long enough that we gave up on it.
+
+    Distinct from the errors PortAudio raises: those usually mean a stale
+    device cache that a reset-and-retry clears, whereas this one means the
+    audio subsystem is wedged and only an app restart will fix it.
+    """
+
+
 class StreamingTranscriber:
     """Transcribes audio chunks on a background thread as they're fed in.
 
@@ -1109,6 +1118,12 @@ class OpenWhisper:
     # A healthy stop+close is ~0.1s.
     _STREAM_TEARDOWN_TIMEOUT = 1.5
 
+    # How long an open+start is allowed to take before we give up on it.
+    # A healthy open is milliseconds; a Bluetooth mic waking up can take a
+    # second or two, so this is a ceiling on "something is wrong", not a
+    # performance target.
+    _STREAM_OPEN_TIMEOUT = 5.0
+
     # If not one audio frame has arrived this long after the stream started,
     # treat the device's IO thread as dead and reopen the stream once.
     _CAPTURE_HEALTH_DELAY = 0.4
@@ -1162,6 +1177,67 @@ class OpenWhisper:
         if device:
             kwargs['device'] = device
         return sd.InputStream(**kwargs)
+
+    def _start_input_stream(self, context="start"):
+        """Open and start an input stream without ever blocking forever.
+
+        PortAudio serialises on its own internal lock, so once a teardown
+        thread is stuck inside it (see _teardown_stream) the *next* open
+        blocks in there too. That block was invisible: "Recording..." is
+        only logged once the stream is live, and a hang raises nothing, so
+        the trigger key went dead with not one line in the log until the
+        app was restarted. Do the work on a throwaway thread and raise if
+        it overruns, so the caller's normal error path reports it.
+
+        Raises AudioStreamUnavailable on timeout.
+        """
+        result = {}
+        done = threading.Event()
+        lock = threading.Lock()
+
+        def _open():
+            try:
+                stream = self._open_input_stream()
+                stream.start()
+            except BaseException as e:  # reported to the caller verbatim
+                with lock:
+                    result['error'] = e
+                done.set()
+                return
+            with lock:
+                # Whoever gets here first wins: if the caller has already
+                # given up, this stream is an orphan and must not be left
+                # running and feeding the audio callback.
+                orphan = 'timed_out' in result
+                if not orphan:
+                    result['stream'] = stream
+            done.set()
+            if orphan:
+                log(f"  Late input stream arrived after timeout ({context}) — closing it")
+                try:
+                    stream.abort()
+                except Exception as e:
+                    log(f"  Late stream abort() failed ({context}): {e}")
+                try:
+                    stream.close()
+                except Exception as e:
+                    log(f"  Late stream close() failed ({context}): {e}")
+
+        threading.Thread(target=_open, daemon=True).start()
+        done.wait(self._STREAM_OPEN_TIMEOUT)
+        with lock:
+            if 'stream' in result:
+                return result['stream']
+            if 'error' in result:
+                raise result['error']
+            result['timed_out'] = True
+        # The open thread is still stuck inside PortAudio. Same deal as an
+        # abandoned teardown: leave it (it's a daemon thread) and don't
+        # trust the audio subsystem afterwards.
+        self._audio_subsystem_suspect = True
+        raise AudioStreamUnavailable(
+            f"audio device did not respond within {self._STREAM_OPEN_TIMEOUT:.0f}s"
+        )
 
     def _teardown_stream(self, stream, context="stop"):
         """Stop and close an input stream without ever blocking the caller.
@@ -1222,16 +1298,19 @@ class OpenWhisper:
 
         try:
             try:
-                self._stream = self._open_input_stream()
-                self._stream.start()
+                self._stream = self._start_input_stream(context="start")
+            except AudioStreamUnavailable:
+                # No point retrying: the device never answered, so a second
+                # attempt just blocks for another timeout, and the reset
+                # below is a no-op once the subsystem is flagged.
+                raise
             except Exception as first_err:
                 # PortAudio's device cache can go stale after sleep/wake or audio
                 # device changes (Bluetooth, headphones, display sleep). Reset
                 # PortAudio and try once more before giving up.
                 log(f"Audio stream failed ({first_err}); retrying...")
                 self._reset_portaudio()
-                self._stream = self._open_input_stream()
-                self._stream.start()
+                self._stream = self._start_input_stream(context="start retry")
             log("Recording...")
             self._last_activity = time.time()
             emit_event("state", state="recording")
@@ -1276,7 +1355,14 @@ class OpenWhisper:
                 self._processing = False
             self._combo_held.clear()
             self._overlay_send({"cmd": "hide"})
-            emit_event("error", message=f"Failed to start recording: {e}")
+            if isinstance(e, AudioStreamUnavailable):
+                # Nothing we can do from in here — PortAudio is wedged and
+                # can't be reset with a thread still inside it. Say so, so
+                # the dead trigger key is at least explained.
+                emit_event("error",
+                           message="Microphone not responding — restart Open Whisper")
+            else:
+                emit_event("error", message=f"Failed to start recording: {e}")
 
     def _reset_portaudio(self):
         """Re-initialise PortAudio to clear a stale device cache.
@@ -1321,8 +1407,9 @@ class OpenWhisper:
                 self._teardown_stream(stale, context="dead-device reopen")
             self._reset_portaudio()
             try:
-                self._stream = self._open_input_stream()
-                self._stream.start()
+                # Guarded: this runs while holding _record_lifecycle_lock,
+                # so a block in here would take the trigger key down with it.
+                self._stream = self._start_input_stream(context="dead-device reopen")
                 log("  Input stream reopened.")
             except Exception as e:
                 # Leave the recording running: release will find no audio

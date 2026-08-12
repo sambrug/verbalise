@@ -143,6 +143,58 @@ d.on_press(ow.keyboard.Key.shift_r)
 time.sleep(0.3)
 check("after a wedge: next dictation can start", started == [True])
 
+# --- An open that blocks, which is what a wedge does to the *next* one -----
+# The check above stubs start_recording out, so it never covered the step
+# that actually hung: opening a stream while a teardown thread is still
+# parked inside PortAudio. PortAudio serialises internally, so the open
+# blocks too — silently, since nothing is logged until the stream is live.
+d5 = make_daemon()
+d5._STREAM_OPEN_TIMEOUT = 0.5
+
+
+def blocked_open():
+    time.sleep(3600)
+
+
+d5._open_input_stream = blocked_open
+t0 = time.time()
+d5.on_press(ow.keyboard.Key.alt_r)
+d5.on_press(ow.keyboard.Key.shift_r)
+time.sleep(d5._STREAM_OPEN_TIMEOUT + 1.0)
+check("blocked open: gave up instead of hanging", d5._recording is False)
+check("blocked open: key state reset",
+      d5._key_held is False and d5._processing is False)
+check("blocked open: pill hidden", {"cmd": "hide"} in d5.overlay_msgs)
+check("blocked open: audio subsystem flagged", d5._audio_subsystem_suspect is True)
+check("blocked open: lifecycle lock released",
+      d5._record_lifecycle_lock.acquire(timeout=0.5))
+d5._record_lifecycle_lock.release()
+
+# And the trigger key still works once the device comes back — the symptom
+# was a hotkey that did nothing at all until the app was restarted.
+recovered = []
+d5.start_recording = lambda: recovered.append(True)
+d5.on_press(ow.keyboard.Key.alt_r)
+d5.on_press(ow.keyboard.Key.shift_r)
+time.sleep(0.3)
+check("blocked open: trigger key alive afterwards", recovered == [True])
+
+# A stream that finally arrives after we gave up must not be left running,
+# or it feeds the audio callback behind the next dictation's back.
+d6 = make_daemon()
+d6._STREAM_OPEN_TIMEOUT = 0.3
+late_stream = HealthyStream()
+let_it_open = threading.Event()
+d6._open_input_stream = lambda: (let_it_open.wait(5), late_stream)[1]
+try:
+    d6._start_input_stream()
+    check("late stream: open raised", False, "expected AudioStreamUnavailable")
+except ow.AudioStreamUnavailable:
+    check("late stream: open raised", True)
+let_it_open.set()
+time.sleep(0.5)
+check("late stream: orphan closed", late_stream.closed is True)
+
 # --- Escape as the manual escape hatch -------------------------------------
 d2 = make_daemon()
 as_if_recording(d2, WedgedStream())
