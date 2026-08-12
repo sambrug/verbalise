@@ -841,10 +841,14 @@ class OpenWhisper:
         try:
             import gc
             import mlx.core as mx
-            from mlx_whisper import transcribe as _mlx_transcribe
+            # Not `from mlx_whisper import transcribe`: the package's
+            # __init__ rebinds that name to the *function*, so the module
+            # (and ModelHolder with it) is only reachable via the submodule
+            # path. Getting this wrong fails silently in the except below.
+            from mlx_whisper.transcribe import ModelHolder
             with self._transcribe_lock:
-                _mlx_transcribe.ModelHolder.model = None
-                _mlx_transcribe.ModelHolder.model_path = None
+                ModelHolder.model = None
+                ModelHolder.model_path = None
                 gc.collect()
                 mx.clear_cache()
             self._model_loaded = False
