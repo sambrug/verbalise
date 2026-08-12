@@ -1124,6 +1124,10 @@ class OpenWhisper:
     # performance target.
     _STREAM_OPEN_TIMEOUT = 5.0
 
+    # Exit code used when we bail out for the menu bar to restart us. Only
+    # for the log's benefit — the menu bar restarts on any unplanned exit.
+    _AUDIO_RESTART_EXIT_CODE = 86
+
     # If not one audio frame has arrived this long after the stream started,
     # treat the device's IO thread as dead and reopen the stream once.
     _CAPTURE_HEALTH_DELAY = 0.4
@@ -1239,6 +1243,28 @@ class OpenWhisper:
             f"audio device did not respond within {self._STREAM_OPEN_TIMEOUT:.0f}s"
         )
 
+    def _hard_exit(self, code):
+        """Leave immediately, skipping interpreter cleanup. Stubbed in tests."""
+        os._exit(code)
+
+    def _exit_for_audio_restart(self):
+        """Exit so the menu bar relaunches us with a fresh audio subsystem.
+
+        PortAudio can't be reset with a thread still stuck inside it, so
+        once we're here the process can never record again — the trigger
+        key is dead until someone restarts the app by hand. The menu bar
+        already auto-restarts an unplanned exit with backoff, so hand it
+        the job rather than leaving the user to notice.
+
+        os._exit, not sys.exit: this runs on a worker thread, where
+        sys.exit would only unwind that thread. A graceful shutdown is no
+        good either — it would queue up behind the same wedged PortAudio.
+        log() and emit_event() both flush, so nothing is lost on the way out.
+        """
+        log("Audio subsystem unrecoverable — exiting so the menu bar can restart us")
+        emit_event("warning", message="Microphone stopped responding — restarting")
+        self._hard_exit(self._AUDIO_RESTART_EXIT_CODE)
+
     def _teardown_stream(self, stream, context="stop"):
         """Stop and close an input stream without ever blocking the caller.
 
@@ -1295,6 +1321,13 @@ class OpenWhisper:
         )
         ceiling_samples = int(self.sample_rate * ceiling_seconds)
         self._audio_buffer_ceiling = ceiling_samples
+
+        # Whether the audio subsystem was *already* wedged going into this
+        # attempt, i.e. some earlier teardown left a thread inside
+        # PortAudio. A timeout on top of that is unrecoverable in-process;
+        # a timeout without it is just a slow device, worth reporting but
+        # not worth restarting over.
+        was_suspect = self._audio_subsystem_suspect
 
         try:
             try:
@@ -1356,11 +1389,16 @@ class OpenWhisper:
             self._combo_held.clear()
             self._overlay_send({"cmd": "hide"})
             if isinstance(e, AudioStreamUnavailable):
-                # Nothing we can do from in here — PortAudio is wedged and
-                # can't be reset with a thread still inside it. Say so, so
-                # the dead trigger key is at least explained.
+                if was_suspect:
+                    # Second strike, and PortAudio can't be reset from in
+                    # here. Bounce the process instead of leaving a daemon
+                    # that will never record again.
+                    self._exit_for_audio_restart()
+                    return
+                # First one: could be a slow device rather than a wedged
+                # subsystem, so report it and let the next attempt judge.
                 emit_event("error",
-                           message="Microphone not responding — restart Open Whisper")
+                           message="Microphone not responding — try again")
             else:
                 emit_event("error", message=f"Failed to start recording: {e}")
 

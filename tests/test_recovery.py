@@ -92,6 +92,9 @@ def make_daemon():
     d.type_at_cursor = lambda text: d.typed.append(text)
     d.transcribe = lambda audio, model_name=None: "hello world"
     d._trigger_keys = {ow.keyboard.Key.alt_r, ow.keyboard.Key.shift_r}
+    # Record the bail-out instead of taking the test runner down with it.
+    d.exit_codes = []
+    d._hard_exit = lambda code: d.exit_codes.append(code)
     return d
 
 
@@ -148,46 +151,79 @@ check("after a wedge: next dictation can start", started == [True])
 # that actually hung: opening a stream while a teardown thread is still
 # parked inside PortAudio. PortAudio serialises internally, so the open
 # blocks too — silently, since nothing is logged until the stream is live.
-d5 = make_daemon()
-d5._STREAM_OPEN_TIMEOUT = 0.5
+dw_block = make_daemon()
+dw_block._STREAM_OPEN_TIMEOUT = 0.5
 
 
 def blocked_open():
     time.sleep(3600)
 
 
-d5._open_input_stream = blocked_open
+dw_block._open_input_stream = blocked_open
 t0 = time.time()
-d5.on_press(ow.keyboard.Key.alt_r)
-d5.on_press(ow.keyboard.Key.shift_r)
-time.sleep(d5._STREAM_OPEN_TIMEOUT + 1.0)
-check("blocked open: gave up instead of hanging", d5._recording is False)
+dw_block.on_press(ow.keyboard.Key.alt_r)
+dw_block.on_press(ow.keyboard.Key.shift_r)
+time.sleep(dw_block._STREAM_OPEN_TIMEOUT + 1.0)
+check("blocked open: gave up instead of hanging", dw_block._recording is False)
 check("blocked open: key state reset",
-      d5._key_held is False and d5._processing is False)
-check("blocked open: pill hidden", {"cmd": "hide"} in d5.overlay_msgs)
-check("blocked open: audio subsystem flagged", d5._audio_subsystem_suspect is True)
+      dw_block._key_held is False and dw_block._processing is False)
+check("blocked open: pill hidden", {"cmd": "hide"} in dw_block.overlay_msgs)
+check("blocked open: audio subsystem flagged", dw_block._audio_subsystem_suspect is True)
 check("blocked open: lifecycle lock released",
-      d5._record_lifecycle_lock.acquire(timeout=0.5))
-d5._record_lifecycle_lock.release()
+      dw_block._record_lifecycle_lock.acquire(timeout=0.5))
+dw_block._record_lifecycle_lock.release()
 
 # And the trigger key still works once the device comes back — the symptom
 # was a hotkey that did nothing at all until the app was restarted.
 recovered = []
-d5.start_recording = lambda: recovered.append(True)
-d5.on_press(ow.keyboard.Key.alt_r)
-d5.on_press(ow.keyboard.Key.shift_r)
+dw_block.start_recording = lambda: recovered.append(True)
+dw_block.on_press(ow.keyboard.Key.alt_r)
+dw_block.on_press(ow.keyboard.Key.shift_r)
 time.sleep(0.3)
 check("blocked open: trigger key alive afterwards", recovered == [True])
 
+# A first timeout is reported, not restarted over: it might just be a slow
+# device rather than a wedged subsystem.
+check("blocked open, first strike: no restart", dw_block.exit_codes == [])
+
+# But a timeout on top of an already-wedged subsystem can't be recovered
+# in-process, so bounce and let the menu bar relaunch us.
+dw_strike2 = make_daemon()
+dw_strike2._STREAM_OPEN_TIMEOUT = 0.5
+dw_strike2._open_input_stream = blocked_open
+dw_strike2._audio_subsystem_suspect = True      # an earlier teardown was abandoned
+dw_strike2.on_press(ow.keyboard.Key.alt_r)
+dw_strike2.on_press(ow.keyboard.Key.shift_r)
+time.sleep(dw_strike2._STREAM_OPEN_TIMEOUT + 1.0)
+check("blocked open, already wedged: exits for restart",
+      dw_strike2.exit_codes == [dw_strike2._AUDIO_RESTART_EXIT_CODE], f"exits={dw_strike2.exit_codes}")
+
+# A healthy open after an abandoned teardown must not trigger any of this:
+# the flag alone isn't grounds for bouncing the process.
+# Asserted on the pill and the open itself, not on _recording still being
+# set: _key_watchdog polls the real keyboard, and with no key physically
+# held it force-stops this recording ~0.15s in.
+dw_ok = make_daemon()
+dw_ok._audio_subsystem_suspect = True
+dw_opened = []
+dw_ok._open_input_stream = lambda: (dw_opened.append(1), HealthyStream())[1]
+dw_ok.on_press(ow.keyboard.Key.alt_r)
+dw_ok.on_press(ow.keyboard.Key.shift_r)
+time.sleep(0.5)
+check("healthy open after a wedge: no restart", dw_ok.exit_codes == [])
+check("healthy open after a wedge: recording started",
+      dw_opened == [1]
+      and {"cmd": "show", "state": "recording"} in dw_ok.overlay_msgs)
+
 # A stream that finally arrives after we gave up must not be left running,
 # or it feeds the audio callback behind the next dictation's back.
-d6 = make_daemon()
-d6._STREAM_OPEN_TIMEOUT = 0.3
+dw_late = make_daemon()
+dw_late._STREAM_OPEN_TIMEOUT = 0.3
 late_stream = HealthyStream()
 let_it_open = threading.Event()
-d6._open_input_stream = lambda: (let_it_open.wait(5), late_stream)[1]
+dw_late._open_input_stream = lambda: (let_it_open.wait(5), late_stream)[1]
 try:
-    d6._start_input_stream()
+    dw_late._start_input_stream()
     check("late stream: open raised", False, "expected AudioStreamUnavailable")
 except ow.AudioStreamUnavailable:
     check("late stream: open raised", True)
