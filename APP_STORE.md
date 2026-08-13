@@ -220,8 +220,8 @@ drop that complexity.
    as post-processing, unchanged.
 3. **First-load compilation.** CoreML compiles models on first use, adding a
    one-off delay the current app doesn't have. Show it in the UI.
-4. **Your streaming logic may become redundant.** That's a win, but budget
-   time to work out how much of `StreamingTranscriber` (`daemon.py:437`)
+4. **Your streaming logic may become redundant.** That's a win, but it's an
+   open question how much of `StreamingTranscriber` (`daemon.py:437`)
    survives versus gets replaced by WhisperKit's own streaming.
 
 ### The alternative, if you want to keep MLX
@@ -263,8 +263,8 @@ that improve *quality*, not features.
 
 This threads 2.4.5(iv) cleanly: the reviewer sees a complete, working app,
 and nothing downloaded later adds functionality. It also removes the current
-first-run failure mode where the menu says "Loading…" for twenty minutes with
-no progress indicator.
+first-run failure mode where the menu sits on "Loading…" with no progress
+indicator while a large model downloads.
 
 Store downloaded models **inside the app container**, never in
 `~/.cache/huggingface`. Requires the `com.apple.security.network.client`
@@ -278,12 +278,12 @@ entitlement.
 
 | Item | Cost | Notes |
 |---|---|---|
-| [Apple Developer Program](https://developer.apple.com/programs/whats-included/) | **$99/year** | Enrol as an **individual** — no D-U-N-S number or company needed. Your own name appears as the developer. Approval typically 24–48h |
+| [Apple Developer Program](https://developer.apple.com/programs/whats-included/) | **$99/year** | Enrol as an **individual** — no D-U-N-S number or company needed. Your own name appears as the developer |
 | App Store commission | **15%** | Via the [Small Business Program](https://developer.apple.com/app-store/small-business-program/), for anyone under $1M/year. You must opt in — it isn't automatic |
 | Free app, no IAP | **£0** | No commission at all if you never charge |
 
-Start the enrolment first. It's the only step with a waiting period and zero
-effort.
+Start the enrolment first — it gates everything else and needs nothing from
+you but the fee.
 
 ### Entitlements
 
@@ -382,7 +382,7 @@ The notes field is where you pre-empt the rejection. Include:
   TextEdit, hold Right Shift, speak, release.
 - **A short screen recording.** This is the single highest-value thing you
   can attach. A reviewer who watches text appear in TextEdit understands the
-  app in fifteen seconds.
+  app immediately.
 
 If rejected, appeal rather than resubmit blindly, and cite the DTS statements
 in §1. Apple also runs bi-weekly "Meet with Apple" App Review appointments
@@ -405,7 +405,7 @@ sits in a grey area.
 
 ## 9. Suggested sequence
 
-**Phase 0 — de-risk the whole thesis (one evening).**
+**Phase 0 — de-risk the whole thesis.**
 An Xcode project that does nothing but: sandboxed, `CGEventTap` to detect a
 held key, `CGEvent.post` to type a hard-coded string into TextEdit. If that
 works sandboxed, every assumption in this document holds. Do not build
