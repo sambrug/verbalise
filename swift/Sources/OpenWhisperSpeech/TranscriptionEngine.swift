@@ -59,7 +59,21 @@ public actor TranscriptionEngine: Transcriber {
     /// a multi-minute download, and starting a recording in front of that only
     /// produces a dictation that appears to hang.
     public var isDownloaded: Bool {
-        Self.existingFolder(for: settings.transcriptionModel.whisperKitModelName) != nil
+        Self.isDownloaded(settings.transcriptionModel)
+    }
+
+    /// Whether a *given* tier is on disk.
+    ///
+    /// `nonisolated` because the Settings window asks about all three tiers
+    /// every time its list refreshes, and none of those answers depend on actor
+    /// state -- they are a question about the filesystem.
+    public nonisolated static func isDownloaded(_ model: TranscriptionModel) -> Bool {
+        existingFolder(for: model.whisperKitModelName) != nil
+    }
+
+    /// Which tiers are on disk right now.
+    public nonisolated static var downloadedModels: Set<TranscriptionModel> {
+        Set(TranscriptionModel.allCases.filter(isDownloaded))
     }
 
     // MARK: - Model storage
@@ -71,7 +85,7 @@ public actor TranscriptionEngine: Transcriber {
     /// container, so this both satisfies App Store rule 2.5.2 and keeps a
     /// multi-gigabyte download out of the user's home directory where nothing
     /// would ever clean it up.
-    private static var modelStorage: URL? {
+    static var modelStorage: URL? {
         try? FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -87,7 +101,7 @@ public actor TranscriptionEngine: Transcriber {
     /// The bundled copy comes first: `balanced` ships inside the app, so a
     /// fresh install must be able to dictate immediately rather than waiting
     /// on a download it does not need.
-    private static func existingFolder(for variant: String) -> URL? {
+    static func existingFolder(for variant: String) -> URL? {
         if let bundled = Bundle.main.url(
             forResource: variant, withExtension: nil, subdirectory: "Models"
         ), FileManager.default.fileExists(atPath: bundled.path) {
