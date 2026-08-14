@@ -51,8 +51,8 @@ the one that is known to work here.
 |---|---|---|
 | 1. Scaffold + sandbox proof | **Done** (`f258e48`) | Builds, signs sandboxed, runs, tap installs. TCC-gated behaviours still need a human — see below. |
 | 2. Pure logic + fixture tests | **Done** (`309f7ed`..`5eca2ed`) | 52 tests green, incl. 122 differential cases vs Python |
-| 3. State machine + recovery tests | Next | `swift test` green |
-| 4. Real adapters | Not started | End-to-end dictation into TextEdit |
+| 3. State machine + recovery tests | **Done** (`e11af6a`..`HEAD`) | 104 tests green; all 11 scenario groups ported |
+| 4. Real adapters | Next | End-to-end dictation into TextEdit |
 | 5. Product UI | Not started | Manual checklist, plan §11 |
 | 6. Polish + handover | Not started | — |
 
@@ -76,6 +76,41 @@ Two divergences worth knowing, both deliberate and commented in the source:
   through decoding. Only observable when two rules overlap.
 - **Config is JSON, not YAML** (plan §10 permits this). Keys and defaults are
   unchanged, so a Python config maps across one-to-one.
+
+### What Phase 3 landed
+
+All eleven scenario groups from `tests/test_recovery.py`, with the seams the
+plan's §3 calls for (`Seams.swift`): audio stream/opener, monotonic clock,
+pasteboard, keyboard poster, transcriber.
+
+| Component | Covers |
+|---|---|
+| `Bounded` | the timeout primitive every audio call goes through |
+| `AudioSession` | groups 1-3 — wedged teardown, blocked open, orphan close, escalation |
+| `DictationController` | groups 4-8 — escape, capture health, leaked timer, abandonment, normal path |
+| `TextInserter` | group 9 — refused write, hijack, restore window |
+| `StreamingTranscriber` | group 10 — feed ordering, failure fallback |
+| `ModelLifecycle` | group 11 — idle unload |
+
+**The central invariant is the generation counter** in `DictationController`.
+Every dictation gets a number and every async continuation captures the number
+it started under; anything finishing after its generation moved on is
+discarded. That is what stops a slow transcription typing into whatever the
+user did next. It is verified by mutation: disabling the guard fails exactly
+the two abandonment tests and nothing else.
+
+### Phase 4 starting notes
+
+- Pin WhisperKit **v1.1.0** (see resolved gaps above) and add it to
+  `Package.swift` as a package dependency. This is the first step needing
+  network access.
+- The adapters to write are the real implementations of the `Seams.swift`
+  protocols, plus `KeyMonitor` (extend `Sources/OpenWhisperSwift/KeyTap.swift`,
+  which already handles tap creation, per-keycode matching, and re-enable).
+- `AudioSession` already expects `AudioStream` methods to block; the
+  `AVAudioEngine` implementation should not try to hide that.
+- Plan §7 wants the model-name mapping resolved at build time and any key
+  without a WhisperKit equivalent greyed out rather than silently missing.
 
 ## Outstanding: needs Sam
 
