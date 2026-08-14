@@ -2,51 +2,57 @@ import AppKit
 import OpenWhisperCore
 import OpenWhisperSpeech
 
-/// Wires the real stack together: key tap -> state machine -> audio, speech,
-/// and text insertion.
-///
-/// The menu here is deliberately minimal — enough to see state, fix
-/// permissions, and quit. The full tree (settings, recent transcripts,
-/// editors, stats) is Phase 5.
+/// Wires the stack together and keeps the menu, pill and stats in step with
+/// the state machine.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
-    private var statusItem: NSStatusItem?
+    /// The emit callbacks handed to the actors are `@Sendable` and cannot hold
+    /// `self` strongly without a retain cycle through them.
+    private static weak var shared: AppDelegate?
+
+    private var menu: StatusMenu?
     private var keyTap: KeyTap?
+    private var pill: OverlayPill?
 
     private var settings = Settings()
     private let store = SettingsStore()
+    private let stats = StatsStore()
 
     private var controller: DictationController?
     private var session: AudioSession?
     private var engine: TranscriptionEngine?
-    private var pill: OverlayPill?
 
-    private var statusLine = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
-    private var lastTranscript: String?
+    private var cachedStats = UsageStats()
+    private var cachedRecent: [RecentTranscript] = []
+    private(set) var lastTranscript: String?
 
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppDelegate.shared = self
         log("Open Whisper (Swift) launched")
+
         loadSettings()
-        buildStatusItem()
+        menu = StatusMenu(delegate: self)
         buildStack()
         startKeyTap()
+        loadStats()
 
         // Pay CoreAudio's first-activation cost now, while nobody is waiting,
         // rather than on the user's first keypress.
-        Task.detached(priority: .utility) { [sampleRate = settings.sampleRate] in
-            AudioPrewarm.run(sampleRate: Double(sampleRate))
+        Task.detached(priority: .utility) { [rate = settings.sampleRate] in
+            AudioPrewarm.run(sampleRate: Double(rate))
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         keyTap?.stop()
+        pill?.quit()
         log("Open Whisper (Swift) terminating")
     }
 
-    // MARK: - Wiring
+    // MARK: - Loading
 
     private func loadSettings() {
         guard let store else {
@@ -55,79 +61,75 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let result = store.load()
         settings = result.settings
+        for error in result.validation.errors {
+            log("config error: \(error)")
+        }
         if !result.validation.isValid {
-            for error in result.validation.errors {
-                log("config error: \(error)")
-            }
+            menu?.show(alert: result.validation.errors.joined(separator: " · "))
         }
         log("config: model=\(settings.transcriptionModel.rawValue) trigger=\(settings.triggerKey)")
     }
 
+    private func loadStats() {
+        guard let stats else { return }
+        Task {
+            await stats.load()
+            cachedStats = await stats.stats
+            cachedRecent = await stats.recent
+            lastTranscript = cachedRecent.first?.text
+            if let text = lastTranscript { menu?.show(lastTranscript: text) }
+        }
+    }
+
+    // MARK: - Stack
+
     private func buildStack() {
         pill = OverlayPill(style: settings.overlayStyle)
 
-        // Audio samples arrive on a realtime thread. They are handed straight
-        // to the controller actor and nothing else happens here — the tap must
-        // never block.
+        let engine = TranscriptionEngine(settings: settings) { phase in
+            Task { @MainActor in AppDelegate.shared?.show(phase: phase) }
+        }
+
+        let controller = DictationController(
+            session: makeSession(),
+            transcriber: engine,
+            inserter: TextInserter(keyboard: SystemKeyboard(), pasteboard: SystemPasteboard()),
+            settings: settings,
+            emit: { event in
+                Task { @MainActor in AppDelegate.shared?.handle(event) }
+            }
+        )
+
+        self.engine = engine
+        self.controller = controller
+        menu?.show(status: "Ready")
+    }
+
+    /// Rebuilt whenever the device or sample rate changes, since both are fixed
+    /// for a stream's lifetime.
+    private func makeSession() -> AudioSession {
         let opener = AVAudioCaptureOpener(
             sampleRate: Double(settings.sampleRate),
             deviceName: settings.inputDevice,
-            onSamples: { [weak self] samples in
-                Task { await self?.controller?.appendAudio(samples) }
+            onSamples: { samples in
+                Task { await AppDelegate.shared?.controller?.appendAudio(samples) }
             },
             onLevel: { level in
-                // Feeds the pill's bars. The original fed these at ~10Hz over
-                // the JSON protocol; in-process it is one hop to the main
-                // actor per buffer.
-                Task { @MainActor in
-                    AppDelegate.shared?.pill?.push(level: Double(level))
-                }
+                Task { @MainActor in AppDelegate.shared?.pill?.push(level: Double(level)) }
             }
         )
-
-        let session = AudioSession(
-            opener: opener,
-            onEscalate: {
-                // Single process: no supervisor to relaunch us, so this
-                // surfaces as a persistent alert pointing at Restart (plan §3).
-                log("audio: subsystem wedged beyond in-process recovery")
-                Task { @MainActor in
-                    NSApp.requestUserAttention(.criticalRequest)
-                }
-            }
-        )
-
-        let engine = TranscriptionEngine(settings: settings) { phase in
+        let session = AudioSession(opener: opener, onEscalate: {
+            // Single process: no supervisor to relaunch us, so this becomes a
+            // persistent alert pointing at Restart (plan §3).
             Task { @MainActor in
-                AppDelegate.shared?.show(phase: phase)
+                AppDelegate.shared?.menu?.show(
+                    alert: "Audio system is not responding. Use Restart from this menu."
+                )
             }
-        }
-
-        let inserter = TextInserter(
-            keyboard: SystemKeyboard(),
-            pasteboard: SystemPasteboard()
-        )
-
-        controller = DictationController(
-            session: session,
-            transcriber: engine,
-            inserter: inserter,
-            settings: settings,
-            emit: { event in
-                Task { @MainActor in
-                    AppDelegate.shared?.handle(event)
-                }
-            }
-        )
+        })
         self.session = session
-        self.engine = engine
-        AppDelegate.shared = self
-        refreshStatus("Ready")
+        return session
     }
-
-    /// The emit callbacks are `@Sendable` and cannot capture `self` strongly
-    /// without a retain cycle through the actors they are handed to.
-    private static weak var shared: AppDelegate?
 
     private func startKeyTap() {
         if !Permissions.hasInputMonitoring {
@@ -135,27 +137,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard let combo = settings.triggerCombo else {
             log("config: trigger_key '\(settings.triggerKey)' is invalid, key tap not started")
-            refreshStatus("Invalid trigger key")
+            menu?.show(alert: "Trigger key '\(settings.triggerKey)' is not valid.")
             return
         }
 
         let tap = KeyTap(
             combo: combo,
-            onChange: { [weak self] held in
-                self?.triggerChanged(held: held)
-            },
-            onEscape: { [weak self] in
-                Task { await self?.controller?.handleEscape() }
-            }
+            onChange: { [weak self] held in self?.triggerChanged(held: held) },
+            onEscape: { Task { await AppDelegate.shared?.controller?.handleEscape() } }
         )
         keyTap = tap.start() ? tap : nil
         if keyTap == nil {
-            refreshStatus("Input Monitoring needed")
+            menu?.show(alert: "Input Monitoring is not granted — the trigger key will not work.")
         }
     }
 
     private func triggerChanged(held: Bool) {
         guard let controller else { return }
+        if settings.soundEnabled {
+            held ? Sounds.playStart() : Sounds.playStop()
+        }
         Task {
             if held {
                 await controller.startRecording()
@@ -170,104 +171,137 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handle(_ event: DictationEvent) {
         switch event {
         case .state(let state):
-            switch state {
-            case .idle: refreshStatus("Ready")
-            case .recording: refreshStatus("Recording…")
-            case .transcribing: refreshStatus("Transcribing…")
-            }
-        case .lastText(let text):
-            lastTranscript = text
-            log("transcript: \(text.prefix(60))")
-        case .warning(let message):
-            refreshStatus(message)
-            log("warning: \(message)")
-        case .error(let message):
-            refreshStatus(message)
-            log("error: \(message)")
+            menu?.show(state: state)
+
         case .pill(let command):
             switch command {
             case .show(let state): pill?.show(state: state)
             case .setState(let state): pill?.set(state: state)
             case .hide: pill?.hide()
             }
+
+        case .lastText(let text):
+            lastTranscript = text
+            menu?.show(lastTranscript: text)
+            menu?.noteDictationCompleted()
+            record(text)
+
+        case .warning(let message):
+            menu?.show(alert: message)
+            log("warning: \(message)")
+
+        case .error(let message):
+            menu?.show(alert: message)
+            log("error: \(message)")
+
         case .statsChanged:
-            break // Stats persistence lands with the rest of the menu.
+            break // Recorded on .lastText, which carries the text to count.
+        }
+    }
+
+    private func record(_ text: String) {
+        guard let stats else { return }
+        Task {
+            await stats.record(text)
+            cachedStats = await stats.stats
+            cachedRecent = await stats.recent
         }
     }
 
     private func show(phase: TranscriptionEngine.Phase) {
         switch phase {
         case .downloading(let fraction):
-            if let fraction {
-                refreshStatus("Downloading model \(Int(fraction * 100))%")
-            } else {
-                refreshStatus("Downloading model…")
-            }
-        case .loading: refreshStatus("Loading model…")
-        case .ready, .idle: break
+            menu?.show(status: fraction.map { "Downloading model \(Int($0 * 100))%" }
+                ?? "Downloading model…")
+        case .loading:
+            menu?.show(status: "Loading model…")
+        case .ready, .idle:
+            break
+        }
+    }
+}
+
+// MARK: - StatusMenuDelegate
+
+extension AppDelegate: StatusMenuDelegate {
+
+    var currentSettings: Settings { settings }
+    var currentStats: UsageStats { cachedStats }
+    var currentRecent: [RecentTranscript] { cachedRecent }
+
+    /// Applies a settings change live, rebuilding only what actually depends on
+    /// what changed (the Python did this on SIGHUP, daemon.py:904).
+    func apply(settings newSettings: Settings) {
+        let validation = newSettings.validate()
+        guard validation.isValid else {
+            // Reject wholesale rather than half-apply, matching the Python.
+            menu?.show(alert: validation.errors.joined(separator: " · "))
+            return
+        }
+
+        let old = settings
+        settings = newSettings
+        try? store?.save(newSettings)
+
+        if old.triggerKey != newSettings.triggerKey, let combo = newSettings.triggerCombo {
+            keyTap?.update(combo: combo)
+        }
+        if old.overlayStyle != newSettings.overlayStyle {
+            pill?.apply(style: newSettings.overlayStyle)
+        }
+
+        // A device or sample-rate change needs a new stream, and both are fixed
+        // for a stream's lifetime — so the session is replaced rather than
+        // reconfigured.
+        let audioChanged = old.inputDevice != newSettings.inputDevice
+            || old.sampleRate != newSettings.sampleRate
+        if audioChanged {
+            log("config: audio input changed, rebuilding the session")
+        }
+
+        Task { [engine, controller, newSettings] in
+            await engine?.apply(settings: newSettings)
+            await controller?.apply(settings: newSettings)
+        }
+
+        if audioChanged {
+            // Cheapest correct option: the controller holds the session, so a
+            // full rebuild is the only way to swap it without adding a mutable
+            // seam that exists purely for this.
+            buildStack()
+        }
+        menu?.show(status: "Ready")
+    }
+
+    func clearRecentTranscripts() {
+        guard let stats else { return }
+        Task {
+            await stats.clearRecent()
+            cachedRecent = await stats.recent
         }
     }
 
-    // MARK: - Status item
-
-    private func buildStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.image = NSImage(
-            systemSymbolName: "waveform", accessibilityDescription: "Open Whisper Swift"
-        )
-        item.button?.image?.isTemplate = true
-
-        let menu = NSMenu()
-        menu.delegate = self
-        statusLine.isEnabled = false
-        menu.addItem(statusLine)
-        menu.addItem(.separator())
-
-        menu.addItem(withTitle: "Copy Last Transcript",
-                     action: #selector(copyLast), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Reveal Log File",
-                     action: #selector(revealLog), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Open Config",
-                     action: #selector(openConfig), keyEquivalent: "").target = self
-        menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit Open Whisper Swift",
-                     action: #selector(quit), keyEquivalent: "q").target = self
-
-        item.menu = menu
-        statusItem = item
-    }
-
-    private func refreshStatus(_ text: String) {
-        statusLine.title = text
-    }
-
-    // MARK: - Actions
-
-    @objc private func copyLast() {
-        guard let lastTranscript else { return }
-        SystemPasteboard().write(lastTranscript)
-    }
-
-    @objc private func revealLog() {
-        guard let url = Log.shared.logFileURL else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([url])
-    }
-
-    @objc private func openConfig() {
+    func openConfigFile() {
         guard let url = store?.url else { return }
         NSWorkspace.shared.open(url)
     }
 
-    @objc private func quit() {
-        NSApp.terminate(nil)
-    }
-}
+    /// Relaunches. Replaces the Python supervisor's restart, and is what the
+    /// escalation alert points the user at when the audio subsystem wedges.
+    func restart() {
+        guard let bundleURL = Bundle.main.bundleURL as URL? else { return }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
 
-extension AppDelegate: NSMenuDelegate {
-    func menuWillOpen(_ menu: NSMenu) {
-        if keyTap == nil, Permissions.hasInputMonitoring {
-            // The grant may have landed after launch.
-            startKeyTap()
+        NSWorkspace.shared.openApplication(at: bundleURL, configuration: configuration) { _, error in
+            Task { @MainActor in
+                if let error {
+                    log("restart failed: \(error.localizedDescription)")
+                    AppDelegate.shared?.menu?.show(alert: "Restart failed — quit and reopen.")
+                } else {
+                    NSApp.terminate(nil)
+                }
+            }
         }
     }
 }
