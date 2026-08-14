@@ -1,0 +1,74 @@
+# XcodeGen spec for anyone who prefers to work in Xcode.
+#
+#   brew install xcodegen && cd swift && xcodegen
+#
+# This is an *additional* entry point, not the build of record. SwiftPM is what
+# every commit is tested against and it works with no Xcode at all, which is how
+# this port was built and what keeps CI simple. Regenerate rather than editing
+# the .xcodeproj, which is gitignored for that reason.
+#
+# The dependency, sources, entitlements and Info.plist are all shared with the
+# SwiftPM build, so the two cannot drift on anything that matters.
+
+name: OpenWhisperSwift
+
+options:
+  bundleIdPrefix: com.sambruggen
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+packages:
+  WhisperKit:
+    url: https://github.com/argmaxinc/WhisperKit
+    exactVersion: 1.1.0
+
+targets:
+  OpenWhisperSwift:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/OpenWhisperCore
+      - path: Sources/OpenWhisperSpeech
+      - path: Sources/OpenWhisperSwift
+      - path: Resources
+        buildPhase: resources
+      # Loaded by path at runtime, exactly as the Python overlay did, so the
+      # SVGs stay the single source for both apps.
+      - path: ../SVG icons for menu bar
+        buildPhase: resources
+    dependencies:
+      - package: WhisperKit
+    info:
+      path: Resources/Info.plist
+      properties:
+        LSUIElement: true
+    entitlements:
+      path: Resources/OpenWhisperSwift.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.sambruggen.openwhisper
+        PRODUCT_NAME: OpenWhisperSwift
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        ENABLE_APP_SANDBOX: YES
+        ENABLE_HARDENED_RUNTIME: NO
+        # The same local identity Scripts/build-app.sh uses. TCC ties grants to
+        # the signature, so sharing it means Xcode builds and script builds do
+        # not each need their own Input Monitoring and Accessibility grants.
+        CODE_SIGN_IDENTITY: "Open Whisper Dev"
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: ""
+
+  OpenWhisperCoreTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/OpenWhisperCoreTests
+    dependencies:
+      - target: OpenWhisperSwift
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"

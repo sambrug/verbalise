@@ -5,6 +5,7 @@
 # of truth — run them directly if you want full output.
 
 .PHONY: help app app-dev app-clean install dev-setup overlay test signing-cert
+.PHONY: swift-app swift-test swift-run swift-xcodeproj test-all
 
 help:
 	@echo "Open Whisper — make targets:"
@@ -17,6 +18,13 @@ help:
 	@echo "  make app-dev      Build dist/Open\\ Whisper.app in alias mode (fast iteration)"
 	@echo "  make app-clean    Wipe build/, dist/, *.egg-info/"
 	@echo "  make install      Copy dist/Open\\ Whisper.app to /Applications/"
+	@echo ""
+	@echo "  Swift port (swift/ — coexists with the Python app):"
+	@echo "  make swift-test      Run the Swift test suite"
+	@echo "  make swift-app       Build + sign swift/build/OpenWhisperSwift.app"
+	@echo "  make swift-run       Build and launch it"
+	@echo "  make swift-xcodeproj Generate swift/OpenWhisperSwift.xcodeproj (needs xcodegen)"
+	@echo "  make test-all        Run both the Python and Swift suites"
 	@echo ""
 
 test:
@@ -70,3 +78,29 @@ install-user: app
 	rm -rf "$$HOME/Applications/Open Whisper.app"
 	cp -R "dist/Open Whisper.app" "$$HOME/Applications/"
 	@echo "    Done. Right-click ~/Applications/Open\\ Whisper.app → Open the first time."
+
+# --- Swift port -------------------------------------------------------------
+#
+# Added per swift_migration_plan.md §8. These wrap swift/Scripts/, which stay
+# the source of truth. Nothing above this line is touched: the Python app's
+# build and test path is unchanged, and `make test` still means the Python
+# suite. `make test-all` runs both.
+
+swift-test:
+	./swift/Scripts/test.sh
+
+swift-app:
+	./swift/Scripts/build-app.sh
+
+swift-run: swift-app
+	open swift/build/OpenWhisperSwift.app
+
+swift-xcodeproj:
+	@command -v xcodegen >/dev/null 2>&1 || { \
+		echo "xcodegen not found. Install it with: brew install xcodegen" >&2; \
+		exit 1; \
+	}
+	cd swift && xcodegen
+	@echo "Generated swift/OpenWhisperSwift.xcodeproj (gitignored — regenerate, don't edit)."
+
+test-all: test swift-test
