@@ -34,7 +34,8 @@ let package = Package(
 
         .testTarget(
             name: "OpenWhisperCoreTests",
-            dependencies: ["OpenWhisperCore"]
+            dependencies: ["OpenWhisperCore"],
+            resources: [.copy("Fixtures")]
         ),
     ],
     swiftLanguageModes: [.v6]
