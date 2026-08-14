@@ -104,28 +104,6 @@ public enum OverlayStyle: String, CaseIterable, Codable, Sendable {
     }
 }
 
-/// How the pill's background is drawn.
-///
-/// Exposed because "how glassy is it" is a judgement that needs looking at, and
-/// rebuilding the app between each look is a poor way to make it.
-public enum OverlayMaterial: String, CaseIterable, Codable, Sendable {
-    /// Liquid Glass, clear variant — refracts what is behind it.
-    case clear
-    /// Liquid Glass, regular variant — frosted, reads as a translucent panel.
-    case regular
-    /// `NSVisualEffectView` with behind-window blending. Pre-Tahoe's material,
-    /// and the one that unambiguously samples the desktop behind the window.
-    case frosted
-
-    public var displayName: String {
-        switch self {
-        case .clear: "Clear Glass"
-        case .regular: "Frosted Glass"
-        case .frosted: "Blurred (legacy)"
-        }
-    }
-}
-
 /// The `advanced:` block of config.example.yaml.
 public struct AdvancedSettings: Codable, Equatable, Sendable {
     public var trimSilenceEnabled: Bool = true
@@ -134,12 +112,10 @@ public struct AdvancedSettings: Codable, Equatable, Sendable {
     public var fastTypingEnabled: Bool = true
     public var fastTypingMaxChars: Int = 80
     public var clipboardRestoreDelay: Double = 1.5
-    public var overlayMaterial: OverlayMaterial = .clear
 
     public init() {}
 
     enum CodingKeys: String, CodingKey {
-        case overlayMaterial = "overlay_material"
         case trimSilenceEnabled = "trim_silence_enabled"
         case streamingTranscribeEnabled = "streaming_transcribe_enabled"
         case modelIdleUnloadMinutes = "model_idle_unload_minutes"
@@ -160,7 +136,6 @@ public struct AdvancedSettings: Codable, Equatable, Sendable {
         fastTypingEnabled = try c.decodeIfPresent(Bool.self, forKey: .fastTypingEnabled) ?? fastTypingEnabled
         fastTypingMaxChars = try c.decodeIfPresent(Int.self, forKey: .fastTypingMaxChars) ?? fastTypingMaxChars
         clipboardRestoreDelay = try c.decodeIfPresent(Double.self, forKey: .clipboardRestoreDelay) ?? clipboardRestoreDelay
-        overlayMaterial = try c.decodeIfPresent(OverlayMaterial.self, forKey: .overlayMaterial) ?? overlayMaterial
     }
 }
 

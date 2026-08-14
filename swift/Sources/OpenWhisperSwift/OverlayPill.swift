@@ -217,7 +217,18 @@ struct VisualEffectView: NSViewRepresentable {
 
 struct OverlayContentView: View {
     @ObservedObject var model: OverlayModel
-    let material: OverlayMaterial
+
+    /// How strongly the glass is drawn. **This is the frostiness dial.**
+    ///
+    /// `Glass.clear` is already the least frosted variant the API offers, so
+    /// going thinner than that means drawing less of it. The glass is applied
+    /// as a *background* rather than as a wrapper precisely so this can fade
+    /// independently of the content — the icon, timer and bars stay at full
+    /// strength however thin the capsule behind them gets.
+    ///
+    /// 1.0 is stock `.clear`. Lower is more see-through; below about 0.5 the
+    /// pill starts to lose its edge against a busy desktop.
+    private static let glassOpacity: Double = 0.72
 
     private let cyan = Color(red: 10 / 255, green: 170 / 255, blue: 210 / 255)
     private let iconWidth: CGFloat = 20
@@ -269,30 +280,26 @@ struct OverlayContentView: View {
         .animation(.easeInOut(duration: 0.45), value: isRecording)
 
         Group {
-            // `.clear` refracts what is behind it; `.regular` is the frosted
-            // variant and reads as a translucent panel. `.frosted` is the
-            // pre-Tahoe NSVisualEffectView path, kept selectable because it is
-            // the one that unambiguously samples behind the window — if it
-            // looks *more* see-through than the glass options, that says the
-            // glass is not getting a desktop backdrop in this borderless panel.
-            //
-            // GlassEffectContainer lets the system render the shape as one
-            // continuous glass surface; without it each glass view is sampled
-            // independently and the effect flattens. `.interactive()` adds the
-            // responsive light play.
-            //
-            // Legibility comes from the content, not the background: the icon
-            // and timer draw in .primary and the bars at 0.85 opacity, so they
-            // stay readable over whatever shows through.
-            if #available(macOS 26.0, *), material != .frosted {
-                GlassEffectContainer {
-                    if material == .clear {
-                        pill.glassEffect(.clear.interactive(), in: .capsule)
-                    } else {
-                        pill.glassEffect(.regular.interactive(), in: .capsule)
+            if #available(macOS 26.0, *) {
+                // `.clear` is the least frosted Liquid Glass variant; the
+                // opacity above is what takes it thinner still.
+                //
+                // Applied as a background rather than wrapping the content, so
+                // fading the glass does not fade the icon and bars with it.
+                // GlassEffectContainer lets the system render it as one
+                // continuous surface — without it the effect flattens.
+                // `.interactive()` adds the responsive light play.
+                pill.background {
+                    GlassEffectContainer {
+                        Capsule()
+                            .fill(.clear)
+                            .glassEffect(.clear.interactive(), in: .capsule)
                     }
+                    .opacity(Self.glassOpacity)
                 }
             } else {
+                // macOS 14/15 have no Liquid Glass; the closest the older
+                // material stack gets.
                 pill.background(
                     ZStack {
                         VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
@@ -356,7 +363,6 @@ final class OverlayPill {
     private var hostingView: TransparentHostingView<OverlayContentView>?
     private var style: OverlayStyle
 
-    private var material: OverlayMaterial
     private let meter: LevelMeter
     private var levelTimer: Timer?
 
@@ -372,18 +378,16 @@ final class OverlayPill {
     /// slowness back for judder.
     private static let levelSampleInterval: TimeInterval = 1.0 / 20.0
 
-    init(style: OverlayStyle, material: OverlayMaterial, meter: LevelMeter) {
+    init(style: OverlayStyle, meter: LevelMeter) {
         self.style = style
-        self.material = material
         self.meter = meter
     }
 
-    /// Live config reload. Either change rebuilds the panel: the materials are
-    /// different view hierarchies, so swapping one in place is not possible.
-    func apply(style newStyle: OverlayStyle, material newMaterial: OverlayMaterial) {
-        guard newStyle != style || newMaterial != material else { return }
+    /// Live config reload. Turning the pill off tears the panel down; turning
+    /// it back on rebuilds it on the next show.
+    func apply(style newStyle: OverlayStyle) {
+        guard newStyle != style else { return }
         style = newStyle
-        material = newMaterial
         teardown()
     }
 
@@ -391,7 +395,7 @@ final class OverlayPill {
         guard panel == nil, style != .off else { return }
 
         let view = TransparentHostingView(
-            rootView: OverlayContentView(model: model, material: material)
+            rootView: OverlayContentView(model: model)
         )
         view.frame = NSRect(x: 0, y: 0, width: 320, height: 48)
         view.wantsLayer = true
