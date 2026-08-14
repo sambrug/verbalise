@@ -20,6 +20,11 @@ let package = Package(
     products: [
         .executable(name: "OpenWhisperSwift", targets: ["OpenWhisperSwift"]),
         .library(name: "OpenWhisperCore", targets: ["OpenWhisperCore"]),
+        // A product, not just a target, so the Xcode app target can depend on
+        // it. project.yml consumes this package rather than re-listing its
+        // sources, which is what stops the two builds disagreeing about what
+        // the modules are.
+        .library(name: "OpenWhisperSpeech", targets: ["OpenWhisperSpeech"]),
     ],
     dependencies: [
         // WhisperKit. `argmaxinc/argmax-oss-swift` and `argmaxinc/WhisperKit`
