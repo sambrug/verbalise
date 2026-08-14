@@ -1,0 +1,170 @@
+import Foundation
+import Testing
+
+@testable import OpenWhisperCore
+
+/// The Speech Model pane's state table.
+///
+/// Worth testing apart from the window because four independent signals feed
+/// one row -- selected, on disk, downloading, progress known -- and the
+/// combinations that matter are the ones a screenshot never shows you.
+@Suite("Model catalog")
+struct ModelCatalogTests {
+
+    @Test("One row per tier, in a stable order")
+    func rowsCoverEveryTier() {
+        let rows = ModelCatalog.rows(selected: .balanced, downloaded: [.balanced])
+        #expect(rows.map(\.model) == TranscriptionModel.allCases)
+    }
+
+    @Test("The selected model on disk is the one in use")
+    func selectedAndPresentIsInUse() {
+        let rows = ModelCatalog.rows(selected: .balanced, downloaded: [.balanced])
+        let balanced = rows.first { $0.model == .balanced }
+        #expect(balanced?.availability == .inUse)
+        #expect(balanced?.badge == "In use")
+        // A badge, not a button: there is nothing to do to a model already in
+        // use, and offering an action implies otherwise.
+        #expect(balanced?.action == nil)
+    }
+
+    @Test("A downloaded model that is not selected is one click away")
+    func downloadedButUnselectedIsReady() {
+        let rows = ModelCatalog.rows(selected: .balanced, downloaded: [.balanced, .fast])
+        let fast = rows.first { $0.model == .fast }
+        #expect(fast?.availability == .ready)
+        #expect(fast?.badge == nil)
+        #expect(fast?.action == nil)
+    }
+
+    @Test("A model that is not on disk offers a download")
+    func absentOffersDownload() {
+        let rows = ModelCatalog.rows(selected: .balanced, downloaded: [.balanced])
+        let accurate = rows.first { $0.model == .accurate }
+        #expect(accurate?.availability == .absent)
+        #expect(accurate?.action == .download)
+        #expect(accurate?.action?.title == "Download")
+        #expect(accurate?.progress == nil)
+    }
+
+    @Test("A download in flight offers a cancel and a progress bar")
+    func downloadingOffersCancel() {
+        let rows = ModelCatalog.rows(
+            selected: .balanced,
+            downloaded: [.balanced],
+            downloading: [.accurate: 0.62]
+        )
+        let accurate = rows.first { $0.model == .accurate }
+        #expect(accurate?.availability == .downloading(fraction: 0.62))
+        #expect(accurate?.action == .cancel)
+        #expect(accurate?.progress == 0.62)
+        #expect(accurate?.isDownloading == true)
+    }
+
+    @Test("Downloading another tier does not disturb the one in use")
+    func downloadingDoesNotStealInUse() {
+        // The whole point of separating download from selection: dictation must
+        // keep working with the current model while a larger one is fetched.
+        let rows = ModelCatalog.rows(
+            selected: .balanced,
+            downloaded: [.balanced],
+            downloading: [.accurate: 0.62]
+        )
+        #expect(rows.first { $0.model == .balanced }?.availability == .inUse)
+    }
+
+    @Test("A model selected before it finishes downloading reads as downloading")
+    func selectedWhileDownloadingIsNotInUse() {
+        // Calling it "In use" while it cannot transcribe anything is exactly
+        // what makes the first dictation after a switch look like a hang.
+        let rows = ModelCatalog.rows(
+            selected: .accurate,
+            downloaded: [.balanced],
+            downloading: [.accurate: 0.1]
+        )
+        let accurate = rows.first { $0.model == .accurate }
+        #expect(accurate?.availability == .downloading(fraction: 0.1))
+        #expect(accurate?.badge == nil)
+    }
+
+    @Test("A download whose size is not yet known still reads as a download")
+    func unknownProgressIsStillDownloading() {
+        let rows = ModelCatalog.rows(
+            selected: .balanced,
+            downloaded: [.balanced],
+            downloading: [.fast: Double?.none]
+        )
+        let fast = rows.first { $0.model == .fast }
+        #expect(fast?.isDownloading == true)
+        #expect(fast?.progress == nil)   // Indeterminate bar, not a bar at zero.
+        #expect(fast?.action == .cancel)
+        #expect(fast?.detail.hasSuffix("Downloading…") == true)
+    }
+
+    @Test("A development build with nothing on disk offers all three")
+    func nothingDownloadedOffersEverything() {
+        // The bundled tier is only bundled in a release build; a dev build
+        // starts empty and must not claim otherwise.
+        let rows = ModelCatalog.rows(selected: .balanced, downloaded: [])
+        #expect(rows.allSatisfy { $0.availability == .absent })
+        #expect(rows.allSatisfy { $0.action == .download })
+    }
+
+    // MARK: - Copy
+
+    @Test("Every tier's detail names the trade and the size")
+    func detailPairsSummaryWithSize() {
+        let rows = ModelCatalog.rows(selected: .balanced, downloaded: [.balanced])
+        #expect(rows[0].detail == "Quickest, least accurate · 216 MB")
+        #expect(rows[1].detail == "Balance of speed and accuracy · 954 MB")
+        #expect(rows[2].detail == "Most accurate, slowest · 3.0 GB")
+    }
+
+    @Test("The three summaries are parallel, not one-off descriptions")
+    func summariesAreParallel() {
+        // They are read against each other, so they must be comparable: same
+        // shape, no trailing sentence, and none of them describing packaging
+        // instead of performance.
+        for model in TranscriptionModel.allCases {
+            #expect(!model.summary.hasSuffix("."))
+            #expect(!model.summary.contains("Included"))
+            #expect(model.summary.first?.isUppercase == true)
+        }
+    }
+
+    @Test("Progress reads as one measurement in the total's unit")
+    func progressTextUsesOneUnit() {
+        #expect(
+            ModelCatalog.progressText(for: .accurate, fraction: 0.633)
+                == "1.9 of 3.0 GB downloaded"
+        )
+        #expect(
+            ModelCatalog.progressText(for: .fast, fraction: 0.5)
+                == "108 of 216 MB downloaded"
+        )
+    }
+
+    @Test("Progress with no known total says so rather than showing zero")
+    func progressTextWithoutFraction() {
+        #expect(ModelCatalog.progressText(for: .accurate, fraction: nil) == "Downloading…")
+    }
+
+    @Test("Progress outside 0...1 is clamped")
+    func progressTextClamps() {
+        // WhisperKit's Progress has reported fractions slightly over 1 on
+        // completion; "3.1 of 3.0 GB" would be a visible embarrassment.
+        #expect(ModelCatalog.progressText(for: .accurate, fraction: 1.4)
+            == "3.0 of 3.0 GB downloaded")
+        #expect(ModelCatalog.progressText(for: .accurate, fraction: -2)
+            == "0.0 of 3.0 GB downloaded")
+    }
+
+    @Test("Sizes pick their unit from the magnitude")
+    func sizeTextPicksUnit() {
+        #expect(ModelCatalog.sizeText(216_000_000) == "216 MB")
+        #expect(ModelCatalog.sizeText(954_000_000) == "954 MB")
+        #expect(ModelCatalog.sizeText(3_000_000_000) == "3.0 GB")
+        #expect(ModelCatalog.sizeText(1_000_000_000) == "1.0 GB")
+        #expect(ModelCatalog.sizeText(999_000_000) == "999 MB")
+    }
+}

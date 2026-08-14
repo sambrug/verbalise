@@ -25,20 +25,34 @@ public enum TranscriptionModel: String, CaseIterable, Codable, Sendable {
         }
     }
 
-    /// Shown next to the name so the download cost is visible before choosing.
-    public var approximateDownloadSize: String {
+    /// Roughly what the download costs. The two smaller tiers state their size
+    /// in the WhisperKit repo's own filename; `large-v3` does not, and 3 GB is
+    /// what it measured on disk.
+    public var approximateDownloadBytes: Int64 {
         switch self {
-        case .fast: "216 MB"
-        case .balanced: "954 MB"
-        case .accurate: "3 GB"
+        case .fast: 216_000_000
+        case .balanced: 954_000_000
+        case .accurate: 3_000_000_000
         }
     }
 
+    /// Shown next to the name so the download cost is visible before choosing.
+    public var approximateDownloadSize: String {
+        ModelCatalog.sizeText(approximateDownloadBytes)
+    }
+
+    /// One clause, same shape for every tier, naming the trade being made.
+    ///
+    /// The three are written to be read against each other -- a user picking
+    /// between them is comparing, so parallel phrasing does the comparing for
+    /// them. An earlier version described `balanced` as "Included with the app",
+    /// which answered a question nobody was asking and left the tier that most
+    /// people should choose as the only one not saying how it performs.
     public var summary: String {
         switch self {
-        case .fast: "Quickest, lowest accuracy. Good for short notes."
-        case .balanced: "Included with the app. The best trade-off for most dictation."
-        case .accurate: "Highest accuracy, slowest, largest download."
+        case .fast: "Quickest, least accurate"
+        case .balanced: "Balance of speed and accuracy"
+        case .accurate: "Most accurate, slowest"
         }
     }
 
