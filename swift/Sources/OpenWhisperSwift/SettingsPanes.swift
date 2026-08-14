@@ -104,8 +104,7 @@ private struct GeneralPane: View {
 
                 Toggle(isOn: model.binding(\.overlayStyle, as: { $0 == .on }, to: { $0 ? .on : .off })) {
                     Text("Show recording overlay")
-                    Text("Shows the microphone level while you speak, so you "
-                         + "can see it's listening.")
+                    Text("Shows the microphone level while you speak.")
                 }
 
                 Toggle(isOn: model.binding(\.soundEnabled)) {
@@ -146,10 +145,8 @@ private struct GeneralPane: View {
             } header: {
                 Text("Advanced")
             } footer: {
-                Text("Every setting is kept in the configuration file, if "
-                     + "you'd rather edit it by hand. Restarting is worth a "
-                     + "try if dictation stops responding.")
-                .settingsFootnote()
+                Text("Restarting can resolve problems with dictation.")
+                    .settingsFootnote()
             }
         }
         .paneStyle()
@@ -180,9 +177,8 @@ private struct DictationPane: View {
             } header: {
                 Text("Trigger Key")
             } footer: {
-                Text("Hold it while you speak, then let go — your words "
-                     + "appear wherever you were typing.\n"
-                     + "Press Escape to stop dictation without inserting anything.")
+                Text("Hold while you speak, then release. "
+                     + "Press Escape to stop without inserting anything.")
                 .settingsFootnote()
             }
 
@@ -213,27 +209,28 @@ private struct DictationPane: View {
 
                 Toggle(isOn: model.binding(\.advanced.trimSilenceEnabled)) {
                     Text("Trim silence")
-                    Text("Cuts the quiet at either end before transcribing.")
+                    Text("Removes silence from the start and end.")
                 }
             } header: {
                 Text("Microphone")
             } footer: {
-                Text(missingDeviceNote ?? "System Default follows your Sound settings, "
-                     + "so a headset works the moment you plug it in.")
-                .settingsFootnote()
+                // Only when something is wrong. The general case needed no
+                // explaining, and a footer that is always there is one more
+                // line to read past every time.
+                if let missingDeviceNote {
+                    Text(missingDeviceNote).settingsFootnote()
+                }
             }
 
             Section {
                 Toggle(isOn: model.binding(\.advanced.streamingTranscribeEnabled)) {
                     Text("Transcribe while you speak")
-                    Text("Gets a head start on long dictations, so there's "
-                         + "less to wait for when you let go.")
+                    Text("Reduces the wait after long dictations.")
                 }
 
                 Toggle(isOn: model.binding(\.advanced.fastTypingEnabled)) {
                     Text("Type short results directly")
-                    Text("Short results are typed straight in. Longer ones are "
-                         + "pasted, and your clipboard is put back afterwards.")
+                    Text("Longer results are pasted instead.")
                 }
             } header: {
                 Text("Text Output")
@@ -295,9 +292,8 @@ private struct SpeechModelPane: View {
                 // describing a button that appears nowhere on the pane -- the
                 // same orphaned explanation the usage footnote had.
                 if model.rows.contains(where: \.isRemovable) {
-                    Text("Removing a model frees its disk space. The one "
-                         + "included with the app can't be removed.")
-                    .settingsFootnote()
+                    Text("The model included with the app can't be removed.")
+                        .settingsFootnote()
                 }
             }
 
@@ -311,9 +307,8 @@ private struct SpeechModelPane: View {
                     }
                 }
             } footer: {
-                Text("Automatic works out the language from what it hears, "
-                     + "which costs a little accuracy on short phrases. Pick "
-                     + "one if you always dictate in the same language.")
+                Text("Automatic detects the language as you speak. "
+                     + "Choosing one is more accurate.")
                 .settingsFootnote()
             }
         }
@@ -420,7 +415,7 @@ private struct VocabularyPane: View {
             } header: {
                 Text("Corrections")
             } footer: {
-                Text("Fixes for the words that come out wrong every time.")
+                Text("Replacements applied after transcribing.")
                 .settingsFootnote()
             }
         }
@@ -540,8 +535,8 @@ private struct PermissionsPane: View {
                 // each grant. Deliberately not `.id(revision)` -- that rebuilds
                 // the rows from scratch every second and resets their state.
                 Text(model.permissionsNeedAttention
-                     ? "macOS asks for each of these separately, and only you "
-                       + "can grant them — Open Whisper can't do it for itself."
+                     ? "These permissions are granted in System Settings. "
+                       + "macOS asks for each one separately."
                      : readyMessage)
                 .settingsFootnote()
             }
@@ -558,8 +553,7 @@ private struct PermissionsPane: View {
     /// heard the phrase and does not yet know which key it means.
     private var readyMessage: String {
         let key = model.settings.triggerCombo?.displayName ?? "your trigger key"
-        return "You're all set. Hold \(key) anywhere and start talking — "
-            + "your words appear wherever you were typing."
+        return "Open Whisper is ready. Hold \(key) to dictate."
     }
 }
 
