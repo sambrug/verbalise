@@ -23,8 +23,13 @@ final class KeyTap: @unchecked Sendable {
     /// combo. Always delivered on the main actor, never on the tap thread.
     typealias Handler = @MainActor (Bool) -> Void
 
+    /// Escape's virtual keycode. Escape is a regular key, not a modifier, so it
+    /// arrives as keyDown rather than flagsChanged and needs its own mask bit.
+    private static let escapeKeyCode: Int64 = 53
+
     private var combo: TriggerCombo
     private let onChange: Handler
+    private let onEscape: @MainActor () -> Void
     private var machPort: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
@@ -34,9 +39,14 @@ final class KeyTap: @unchecked Sendable {
     /// evaluate to "held".
     private var isHeld = false
 
-    init(combo: TriggerCombo, onChange: @escaping Handler) {
+    init(
+        combo: TriggerCombo,
+        onChange: @escaping Handler,
+        onEscape: @escaping @MainActor () -> Void = {}
+    ) {
         self.combo = combo
         self.onChange = onChange
+        self.onEscape = onEscape
     }
 
     /// Installs the tap. Returns false when the OS refuses, which in practice
@@ -45,7 +55,8 @@ final class KeyTap: @unchecked Sendable {
     func start() -> Bool {
         guard machPort == nil else { return true }
 
-        let mask: CGEventMask = 1 << CGEventType.flagsChanged.rawValue
+        let mask: CGEventMask = (1 << CGEventType.flagsChanged.rawValue)
+            | (1 << CGEventType.keyDown.rawValue)
         guard let port = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
@@ -112,9 +123,21 @@ final class KeyTap: @unchecked Sendable {
             return
         }
 
-        guard type == .flagsChanged else { return }
-
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+
+        if type == .keyDown {
+            // Escape is the manual escape hatch. The tap is listen-only, so
+            // Escape still reaches the focused app as normal -- we observe it,
+            // we do not swallow it.
+            guard keyCode == Self.escapeKeyCode else { return }
+            let handler = onEscape
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { handler() }
+            }
+            return
+        }
+
+        guard type == .flagsChanged else { return }
         guard combo.involves(keyCode: keyCode) else { return }
 
         // Stateless and exact: the device-dependent bits say which *physical*
