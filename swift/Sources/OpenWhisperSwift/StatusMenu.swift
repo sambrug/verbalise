@@ -78,9 +78,13 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        lastItem.isEnabled = false
+        // The transcript itself copies on click — a separate "Copy Last"
+        // item was a second row saying what clicking the first should
+        // obviously do.
+        lastItem.target = self
+        lastItem.action = #selector(copyLast)
+        lastItem.toolTip = "Click to copy"
         menu.addItem(lastItem)
-        add(to: menu, title: "Copy Last Transcript", action: #selector(copyLast))
 
         let recentItem = NSMenuItem(title: "Recent Transcripts", action: nil, keyEquivalent: "")
         recentItem.submenu = recentMenu
@@ -88,6 +92,9 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        // Everything configurable lives behind Settings. Only what you act on
+        // in the moment — state, the last transcript, Restart, Quit — stays at
+        // the top level.
         let settingsItem = NSMenuItem(title: "Settings", action: nil, keyEquivalent: "")
         settingsItem.submenu = settingsMenu
         menu.addItem(settingsItem)
@@ -101,15 +108,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        add(to: menu, title: "Permissions…", action: #selector(showPermissions))
-        add(to: menu, title: "Import from Open Whisper (Python)…",
-            action: #selector(importFromPython))
-        add(to: menu, title: "Open Config", action: #selector(openConfig))
-        add(to: menu, title: "View Logs", action: #selector(viewLogs))
-        add(to: menu, title: "Launch at Login", action: #selector(toggleLoginItem))
         add(to: menu, title: "Restart", action: #selector(restart))
-
-        menu.addItem(.separator())
         add(to: menu, title: "Quit Open Whisper Swift", action: #selector(quit), key: "q")
 
         statusItem.menu = menu
@@ -131,7 +130,6 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         rebuildRecent()
         rebuildSettings()
         refreshStatsLines()
-        refreshLoginItemState()
     }
 
     func show(state: DictationState) {
@@ -332,6 +330,18 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
         add(to: settingsMenu, title: "Vocabulary…", action: #selector(editVocabulary))
         add(to: settingsMenu, title: "Phonetic Corrections…", action: #selector(editPhonetic))
+
+        settingsMenu.addItem(.separator())
+
+        let login = add(to: settingsMenu, title: "Launch at Login",
+                        action: #selector(toggleLoginItem))
+        login.state = SMAppService.mainApp.status == .enabled ? .on : .off
+
+        add(to: settingsMenu, title: "Permissions…", action: #selector(showPermissions))
+        add(to: settingsMenu, title: "Open Config", action: #selector(openConfig))
+        add(to: settingsMenu, title: "View Logs", action: #selector(viewLogs))
+        add(to: settingsMenu, title: "Import from Open Whisper (Python)…",
+            action: #selector(importFromPython))
     }
 
     private func addSubmenu(to menu: NSMenu, title: String, submenu: NSMenu) {
@@ -358,14 +368,6 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     // MARK: - Login item
 
-    private var loginItem: NSMenuItem? {
-        statusItem.menu?.items.first { $0.title == "Launch at Login" }
-    }
-
-    private func refreshLoginItemState() {
-        loginItem?.state = SMAppService.mainApp.status == .enabled ? .on : .off
-    }
-
     @objc private func toggleLoginItem() {
         do {
             if SMAppService.mainApp.status == .enabled {
@@ -377,7 +379,6 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             log("login item: \(error.localizedDescription)")
             show(alert: "Could not change Launch at Login: \(error.localizedDescription)")
         }
-        refreshLoginItemState()
     }
 
     // MARK: - Actions
@@ -488,12 +489,12 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         LogWindow.show()
     }
 
-    @objc private func showPermissions() {
-        OnboardingWindow.show()
-    }
-
     @objc private func importFromPython() {
         delegate?.importFromPythonApp()
+    }
+
+    @objc private func showPermissions() {
+        OnboardingWindow.show()
     }
 
     @objc private func restart() {

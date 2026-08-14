@@ -327,9 +327,10 @@ extension AppDelegate: StatusMenuDelegate {
 
     /// Brings settings and lifetime stats across from the Python app.
     ///
-    /// The user picks the folder, which is what makes reading outside the
-    /// container sandbox-legal — the grant comes from their selection, not
-    /// from an entitlement (plan §9 phase 6).
+    /// It has to be an open panel. A sandboxed process cannot read outside its
+    /// container however it is launched — a command-line path fails just as
+    /// silently as anything else — so the read grant has to come from the user
+    /// picking the folder, which is what powerbox gives us (plan §9 phase 6).
     func importFromPythonApp() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -337,16 +338,16 @@ extension AppDelegate: StatusMenuDelegate {
         panel.allowsMultipleSelection = false
         panel.prompt = "Import"
         panel.message = "Choose the Python app's data folder "
-            + "(Application Support ▸ Open Whisper)."
+            + "(Library ▸ Application Support ▸ Open Whisper)."
 
-        // Points at the usual location, but the user is free to go elsewhere —
-        // this is a starting point, not a restriction.
-        if let support = try? FileManager.default.url(
-            for: .applicationSupportDirectory, in: .userDomainMask,
-            appropriateFor: nil, create: false
-        ) {
-            panel.directoryURL = support.appendingPathComponent("Open Whisper")
-        }
+        // The user's *real* home, not the container. FileManager's domain URLs
+        // and NSHomeDirectory() both resolve inside the container for a
+        // sandboxed app, so the first version of this opened the panel at a
+        // path that could not possibly hold the Python app's data — which is
+        // why it always found nothing.
+        let home = Self.realHomeDirectory()
+        panel.directoryURL = URL(fileURLWithPath: home)
+            .appendingPathComponent("Library/Application Support/Open Whisper")
 
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let directory = panel.url else { return }
@@ -357,20 +358,24 @@ extension AppDelegate: StatusMenuDelegate {
             return
         }
 
-        var summaryParts: [String] = []
+        var parts: [String] = []
         if let imported = result.settings {
             apply(settings: imported)
-            summaryParts.append("settings")
+            parts.append("settings")
         }
-        if let importedStats = result.stats, let importedRecent = result.recent {
-            summaryParts.append("\(importedStats.totalRecordings) recordings")
-            replaceStats(importedStats, recent: importedRecent)
-        } else if let importedStats = result.stats {
-            summaryParts.append("\(importedStats.totalRecordings) recordings")
-            replaceStats(importedStats, recent: cachedRecent)
+        if let importedStats = result.stats {
+            parts.append("\(importedStats.totalRecordings) recordings")
+            replaceStats(importedStats, recent: result.recent ?? cachedRecent)
         }
+        presentImportResult(result, summary: "Imported \(parts.joined(separator: " and ")).")
+    }
 
-        presentImportResult(result, summary: "Imported \(summaryParts.joined(separator: " and ")).")
+    /// The user's real home, not the sandbox container.
+    private static func realHomeDirectory() -> String {
+        if let pw = getpwuid(getuid()), let dir = pw.pointee.pw_dir {
+            return String(cString: dir)
+        }
+        return NSHomeDirectory()
     }
 
     private func replaceStats(_ newStats: UsageStats, recent newRecent: [RecentTranscript]) {
@@ -384,9 +389,8 @@ extension AppDelegate: StatusMenuDelegate {
         }
     }
 
-    /// Always shown, including the notes. An import that silently skipped the
-    /// user's vocabulary would be discovered much later, and by then they would
-    /// have no idea why it was missing.
+    /// Always shown, notes included. An import that silently skipped the user's
+    /// vocabulary would be discovered much later with no way to tell why.
     private func presentImportResult(_ result: PythonImport.Result, summary: String) {
         let alert = NSAlert()
         alert.messageText = summary
@@ -397,6 +401,7 @@ extension AppDelegate: StatusMenuDelegate {
         alert.addButton(withTitle: "OK")
         alert.runModal()
     }
+
 
     /// Relaunches. Replaces the Python supervisor's restart, and is what the
     /// escalation alert points the user at when the audio subsystem wedges.

@@ -218,18 +218,6 @@ struct VisualEffectView: NSViewRepresentable {
 struct OverlayContentView: View {
     @ObservedObject var model: OverlayModel
 
-    /// How strongly the glass is drawn. **This is the frostiness dial.**
-    ///
-    /// `Glass.clear` is already the least frosted variant the API offers, so
-    /// going thinner than that means drawing less of it. The glass is applied
-    /// as a *background* rather than as a wrapper precisely so this can fade
-    /// independently of the content — the icon, timer and bars stay at full
-    /// strength however thin the capsule behind them gets.
-    ///
-    /// 1.0 is stock `.clear`. Lower is more see-through; below about 0.5 the
-    /// pill starts to lose its edge against a busy desktop.
-    private static let glassOpacity: Double = 0.72
-
     private let cyan = Color(red: 10 / 255, green: 170 / 255, blue: 210 / 255)
     private let iconWidth: CGFloat = 20
     private let timerWidth: CGFloat = 38
@@ -281,21 +269,21 @@ struct OverlayContentView: View {
 
         Group {
             if #available(macOS 26.0, *) {
-                // `.clear` is the least frosted Liquid Glass variant; the
-                // opacity above is what takes it thinner still.
+                // Full-strength `.clear` glass, wrapping the content.
                 //
-                // Applied as a background rather than wrapping the content, so
-                // fading the glass does not fade the icon and bars with it.
-                // GlassEffectContainer lets the system render it as one
-                // continuous surface — without it the effect flattens.
+                // An earlier version applied it as a faded background to go
+                // "less frosted". That was the wrong reading of the ask: fading
+                // glass does not make it clearer, it makes it *paler* — the
+                // refraction weakens along with everything else and the pill
+                // just looks washed out. Drawing the material at full strength
+                // is what gives it presence.
+                //
+                // GlassEffectContainer lets the system render the shape as one
+                // continuous glass surface; without it each glass view is
+                // sampled independently and the effect flattens.
                 // `.interactive()` adds the responsive light play.
-                pill.background {
-                    GlassEffectContainer {
-                        Capsule()
-                            .fill(.clear)
-                            .glassEffect(.clear.interactive(), in: .capsule)
-                    }
-                    .opacity(Self.glassOpacity)
+                GlassEffectContainer {
+                    pill.glassEffect(.clear.interactive(), in: .capsule)
                 }
             } else {
                 // macOS 14/15 have no Liquid Glass; the closest the older
