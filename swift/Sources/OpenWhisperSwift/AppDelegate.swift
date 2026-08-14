@@ -185,7 +185,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // persistent alert pointing at Restart (plan §3).
             Task { @MainActor in
                 AppDelegate.shared?.menu?.show(
-                    alert: "Audio system is not responding. Use Restart from this menu."
+                    alert: "The audio system has stopped responding. "
+                        + "Restart Open Whisper in Settings ▸ General."
                 )
             }
         })
@@ -210,6 +211,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startKeyTap() {
+        // Replacing an existing tap, not adding to it. An event tap installed
+        // before Input Monitoring was granted stays permanently deaf -- it
+        // installs happily and simply never delivers -- so the tap has to be
+        // torn down and rebuilt once the grant lands.
+        keyTap?.stop()
+        keyTap = nil
+
         if !Permissions.hasInputMonitoring {
             Permissions.requestInputMonitoring()
         }
@@ -370,6 +378,11 @@ extension AppDelegate: SettingsDelegate {
 
     func showLog() {
         LogWindow.show()
+    }
+
+    func reinstallKeyTap() {
+        startKeyTap()
+        if keyTap != nil { menu?.clearAlert() }
     }
 
     /// Applies a settings change live, rebuilding only what actually depends on

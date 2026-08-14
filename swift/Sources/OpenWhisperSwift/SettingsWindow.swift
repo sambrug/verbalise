@@ -21,6 +21,10 @@ protocol SettingsDelegate: AnyObject {
 
     func openConfigFile()
     func showLog()
+    func restart()
+
+    /// Input Monitoring has just been granted; the key tap needs rebuilding.
+    func reinstallKeyTap()
 }
 
 /// The Settings window, replacing the status menu's `Settings ▸` submenu.
@@ -235,8 +239,25 @@ final class SettingsModel: ObservableObject {
         launchesAtLogin = LoginItem.isEnabled
     }
 
+    /// Last seen Input Monitoring state, so the grant can be acted on the
+    /// moment it lands rather than only noticed.
+    private var hadInputMonitoring = Permissions.hasInputMonitoring
+
     func refreshPermissions() {
         permissionsRevision &+= 1
+
+        // The one grant that needs more than a redraw. Everything else takes
+        // effect immediately; a key tap installed before this was granted
+        // never delivers an event, so without this the user grants Input
+        // Monitoring, watches the row tick green, and finds the trigger key
+        // still does nothing -- with no reason given and no way to guess that
+        // relaunching is the fix.
+        let hasIt = Permissions.hasInputMonitoring
+        if hasIt, !hadInputMonitoring {
+            log("permissions: Input Monitoring granted, rebuilding the key tap")
+            delegate?.reinstallKeyTap()
+        }
+        hadInputMonitoring = hasIt
     }
 
     var permissionsNeedAttention: Bool {
@@ -289,4 +310,5 @@ final class SettingsModel: ObservableObject {
 
     func openConfigFile() { delegate?.openConfigFile() }
     func showLog() { delegate?.showLog() }
+    func restart() { delegate?.restart() }
 }
