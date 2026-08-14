@@ -285,6 +285,19 @@ struct OverlayContentView: View {
                 GlassEffectContainer {
                     pill.glassEffect(.clear.interactive(), in: .capsule)
                 }
+                // Elevation. Native Liquid Glass reads as a pane floating
+                // above what it refracts, and the shadow is most of what says
+                // so -- without one the pill sits flat on the desktop like a
+                // decal. The panel cannot supply it (`hasShadow` on a
+                // borderless transparent window draws a rectangle around the
+                // whole thing, not around the capsule), so it belongs here,
+                // outside the container, where it shadows the composited glass
+                // rather than the content sitting on it.
+                //
+                // Deliberately soft and close: a hard shadow reads as a
+                // drop-shadowed rectangle from a decade ago, and glass sits
+                // near the surface it floats over.
+                .shadow(color: .black.opacity(0.22), radius: 10, y: 3)
             } else {
                 // macOS 14/15 have no Liquid Glass; the closest the older
                 // material stack gets.
