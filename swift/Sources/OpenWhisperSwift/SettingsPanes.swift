@@ -269,9 +269,15 @@ private struct SpeechModelPane: View {
                 Text("Transcription runs on this Mac. Nothing you dictate leaves your device.")
                     .settingsFootnote()
             } footer: {
-                Text("Downloaded models can be removed here. The one included "
-                     + "with the app stays put.")
+                // Only once there is something to remove. On a fresh install
+                // the only model present is the bundled one, so this was
+                // describing a button that appears nowhere on the pane -- the
+                // same orphaned explanation the usage footnote had.
+                if model.rows.contains(where: \.isRemovable) {
+                    Text("Removing a model frees its disk space. The one "
+                         + "included with the app can't be removed.")
                     .settingsFootnote()
+                }
             }
 
             Section {
@@ -352,6 +358,11 @@ private struct ModelRowView: View {
         .onTapGesture { model.select(row.model) }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        // The trait alone was a lie: it said "button" to VoiceOver while the
+        // only way to activate the row was a tap gesture, which VoiceOver
+        // cannot perform. Selecting a model is this pane's primary action and
+        // was unreachable without a mouse.
+        .accessibilityAction { model.select(row.model) }
     }
 }
 
