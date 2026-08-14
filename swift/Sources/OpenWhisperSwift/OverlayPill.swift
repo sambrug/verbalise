@@ -346,8 +346,18 @@ final class OverlayPill {
     private var hostingView: TransparentHostingView<OverlayContentView>?
     private var style: OverlayStyle
 
-    init(style: OverlayStyle) {
+    private let meter: LevelMeter
+    private var levelTimer: Timer?
+
+    /// Plan §4 asks for bars "fed ~10 Hz". Sampling on a timer at a fixed rate,
+    /// rather than pushing once per audio buffer, is what makes the waveform
+    /// scroll evenly — buffer arrival is neither regular nor at a rate the
+    /// animation should inherit.
+    private static let levelSampleInterval: TimeInterval = 1.0 / 12.0
+
+    init(style: OverlayStyle, meter: LevelMeter) {
         self.style = style
+        self.meter = meter
     }
 
     /// Live config reload. A style change rebuilds the panel, since translucent
@@ -423,6 +433,7 @@ final class OverlayPill {
         }
         if state == "recording" {
             model.startTimer()
+            startSamplingLevels()
         }
         panel.setContentSize(maxSize)
         if let screen = NSScreen.main {
@@ -437,9 +448,22 @@ final class OverlayPill {
         }
     }
 
-    func push(level: Double) {
-        guard style != .off else { return }
-        model.pushLevel(CGFloat(level))
+    private func startSamplingLevels() {
+        meter.reset()
+        levelTimer?.invalidate()
+        levelTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.levelSampleInterval, repeats: true
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.model.pushLevel(CGFloat(self.meter.read()))
+            }
+        }
+    }
+
+    private func stopSamplingLevels() {
+        levelTimer?.invalidate()
+        levelTimer = nil
     }
 
     func set(state: String) {
@@ -447,6 +471,7 @@ final class OverlayPill {
         model.currentState = state
         if state != "recording" {
             model.stopTimer()
+            stopSamplingLevels()
         }
         // Don't reposition here. The pill width is constant across states, and
         // resizing the panel mid-animation causes a perceptible vertical jump.
@@ -454,6 +479,7 @@ final class OverlayPill {
 
     func hide() {
         model.stopTimer()
+        stopSamplingLevels()
         model.visible = false
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             self?.panel?.orderOut(nil)

@@ -264,7 +264,7 @@ public actor DictationController {
         guard let streamer, streamerLastCut > 0 else {
             // Nothing was streamed -- either disabled, or the dictation was
             // too short to reach a sentence boundary.
-            return try await transcriber.transcribe(audio)
+            return try await transcriber.transcribe(trimmedIfEnabled(audio))
         }
 
         // The tail after the last cut, if anyone actually spoke in it. Handing
@@ -278,9 +278,30 @@ public actor DictationController {
         let chunks = await streamer.drain()
         if await streamer.failed {
             log("streaming: a chunk failed, falling back to a single pass")
-            return try await transcriber.transcribe(audio)
+            return try await transcriber.transcribe(trimmedIfEnabled(audio))
         }
         return TextPipeline.joinStreamingChunks(chunks)
+    }
+
+    /// Applies `trim_silence_enabled` to a whole-clip pass (daemon.py:328).
+    ///
+    /// Only ever applied to the *whole clip*, never while streaming.
+    /// `streamerLastCut` is an index into the untrimmed buffer, and trimming
+    /// removes samples from the front — so trimming mid-stream would silently
+    /// shift every subsequent chunk boundary and scramble the transcript.
+    /// Streamed chunks need it less anyway: they are already cut at detected
+    /// silence, and the tail is voice-gated before it is sent.
+    private func trimmedIfEnabled(_ audio: [Float]) -> [Float] {
+        guard settings.advanced.trimSilenceEnabled else { return audio }
+
+        let (trimmed, saved) = Silence.trim(audio, sampleRate: settings.sampleRate)
+        guard saved > 0 else { return audio }
+
+        log(String(
+            format: "silence: trimmed %.2fs before transcription",
+            Double(saved) / Double(max(settings.sampleRate, 1))
+        ))
+        return trimmed
     }
 
     private func finish(gen: Int) {

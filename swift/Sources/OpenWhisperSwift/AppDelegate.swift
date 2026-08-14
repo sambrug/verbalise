@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppDelegate.shared = self
         log("Open Whisper (Swift) launched")
 
+        installEditMenu()
         loadSettings()
         menu = StatusMenu(delegate: self)
         buildStack()
@@ -50,6 +51,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keyTap?.stop()
         pill?.quit()
         log("Open Whisper (Swift) terminating")
+    }
+
+    /// Gives the editor windows working Cut/Copy/Paste/Select All.
+    ///
+    /// `NSTextView` does not implement those shortcuts itself — it relies on
+    /// the main menu's key equivalents reaching it through the responder
+    /// chain. An `LSUIElement` app has no main menu at all, so ⌘C did nothing.
+    /// This is the same gap that made menubar.py:374 hand-build an editor and
+    /// lose clipboard support doing it; the fix is to supply the menu rather
+    /// than to reimplement the commands.
+    private func installEditMenu() {
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(
+            withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"
+        )
+
+        let editItem = NSMenuItem()
+        editItem.submenu = edit
+
+        let mainMenu = NSMenu()
+        mainMenu.addItem(editItem)
+        NSApp.mainMenu = mainMenu
     }
 
     // MARK: - Loading
@@ -83,8 +112,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Stack
 
+    private let meter = LevelMeter()
+
     private func buildStack() {
-        pill = OverlayPill(style: settings.overlayStyle)
+        pill = OverlayPill(style: settings.overlayStyle, meter: meter)
 
         let engine = TranscriptionEngine(settings: settings) { phase in
             Task { @MainActor in AppDelegate.shared?.show(phase: phase) }
@@ -114,8 +145,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onSamples: { samples in
                 Task { await AppDelegate.shared?.controller?.appendAudio(samples) }
             },
-            onLevel: { level in
-                Task { @MainActor in AppDelegate.shared?.pill?.push(level: Double(level)) }
+            // Straight into the meter: no actor hop, no allocation, nothing
+            // that could stall the realtime audio thread. The pill samples it
+            // on its own timer.
+            onLevel: { [meter] level in
+                meter.report(level)
             }
         )
         let session = AudioSession(opener: opener, onEscalate: {
