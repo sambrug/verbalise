@@ -66,8 +66,31 @@ anyone who prefers to work in the IDE.
 | 2. Pure logic + fixture tests | **Done** (`309f7ed`..`5eca2ed`) | 52 tests green, incl. 122 differential cases vs Python |
 | 3. State machine + recovery tests | **Done** (`e11af6a`..`HEAD`) | 104 tests green; all 11 scenario groups ported |
 | 4. Real adapters | **Built, gate pending** | End-to-end dictation into TextEdit — needs a human to speak |
-| 5. Product UI | Not started | Manual checklist, plan §11 |
-| 6. Polish + handover | Not started | — |
+| 5. Product UI | **Built** | Manual checklist, plan §11 — **outstanding** |
+| 6. Polish + handover | **Done** | — |
+
+All six phases are implemented. What remains is verification, not code: the
+plan §11 checklist below has only been partly exercised.
+
+## Outstanding: plan §11 checklist
+
+Verified so far — sandbox event taps and keystroke posting, end-to-end
+dictation, the pill, the editors' clipboard shortcuts.
+
+Not yet checked by a human:
+
+- [ ] A long dictation (>30s) streams; release-to-text wait stays short
+- [ ] Short dictation leaves the clipboard untouched; long one restores the
+      previous clipboard after ~1.5s
+- [ ] Escape cancels a live recording; nothing is typed
+- [ ] Switching models downloads with visible progress and works after
+- [ ] **Yank a Bluetooth mic mid-recording** — the recovery machinery has 11
+      scenario groups of coverage against *fakes* and none against real
+      hardware. This is the most valuable unchecked item.
+- [ ] Launch at Login survives a logout/login
+- [ ] Import from the Python app brings the lifetime numbers across
+- [ ] Onboarding window (only visible via *Permissions…* while grants are in
+      place)
 
 ### What Phase 2 landed
 
