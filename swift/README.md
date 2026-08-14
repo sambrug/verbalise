@@ -161,8 +161,10 @@ Everything is in the app container, nothing outside it:
   Logs/open-whisper-swift.log
 ```
 
-The stats files keep the Python's filenames, keys and timestamp format, so
-*Import from Open Whisper (Python)…* is a file copy rather than a translation.
+The stats files keep the Python's filenames, keys and timestamp format. There
+is no longer an import action — it was dropped before it was ever verified
+end to end — but the formats still line up, so copying the two JSON files
+across by hand works.
 
 ## Divergences from the Python app
 
@@ -185,7 +187,11 @@ Beyond plan §10's accepted list:
   animation, which samples at a fixed 20Hz. Buffer arrival is neither regular
   nor a rate the animation should inherit.
 - **Settings live in a window, not the menu** (above). This also absorbed the
-  separate onboarding window: the permission rows are now a pane.
+  separate onboarding window: the permission rows are now a pane, and the
+  lifetime counters are rows in General.
+- **No import from the Python app.** Plan §9 phase 6 called for one and it was
+  built; it was dropped before being verified. The stats file formats still
+  match, so a hand copy works.
 - **Config is JSON**, not YAML (plan §10 permits this). Same keys, same
   defaults.
 - **Phonetic corrections apply in sorted-key order.** Python uses dict insertion

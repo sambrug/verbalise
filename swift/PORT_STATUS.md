@@ -90,7 +90,14 @@ The pieces worth knowing:
 | `OpenWhisperSwift/SettingsPanes.swift` | The SwiftUI views. |
 
 `OnboardingWindow.swift` and `TextEditorWindow` are **deleted** — both were
-replaced by panes. SwiftUI rather than AppKit here (the second place after the
+replaced by panes. `PythonImport.swift` is **deleted** too: Sam dropped the
+feature (2026-08-14) rather than finish verifying it, so plan §9 phase 6's
+import action no longer exists. It is in the history if it is ever wanted.
+
+The lifetime counters moved out of the menu into Settings ▸ General as three
+labelled rows. `StatsFormatter.formatStats` is the single-line menu form and is
+now unused by the app, kept because the fixture suite verifies it against the
+Python's output and that parity is worth not losing. SwiftUI rather than AppKit here (the second place after the
 pill): the grouped-inset list and the sidebar are stock controls in SwiftUI and
 hand-built ones in AppKit, and matching macOS is the whole point of the window.
 
@@ -111,9 +118,7 @@ Two items, both recorded against the plan's own §11 checklist:
 
 1. **Yank a Bluetooth mic mid-recording.** The recovery machinery has coverage
    against fakes for all 11 scenario groups and none against real hardware.
-2. **Run the Python import successfully.** The mechanism is fixed and tested;
-   it has not yet completed end to end. Now at Settings ▸ General.
-3. **Click through the Settings window.** New as of 2026-08-14. Specifically:
+2. **Click through the Settings window.** New as of 2026-08-14. Specifically:
    a model downloading with visible progress and a working Cancel, and the
    Permissions pane ticking over live as a grant is made in System Settings.
 
@@ -135,7 +140,6 @@ Not yet checked by a human:
       scenario groups of coverage against *fakes* and none against real
       hardware. This is the most valuable unchecked item.
 - [ ] Launch at Login survives a logout/login
-- [ ] Import from the Python app brings the lifetime numbers across
 - [ ] Onboarding window (only visible via *Permissions…* while grants are in
       place)
 

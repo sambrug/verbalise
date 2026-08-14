@@ -79,12 +79,16 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
 
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 720, height: 480),
-            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+            // No .fullSizeContentView: it hands the titlebar to the content,
+            // which makes macOS draw the window with its large-title chrome —
+            // an oversized corner radius and the pane name repeated as a
+            // heading inside the content. A plain titled window gets the
+            // system's standard radius and puts the title where it belongs.
+            styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
         window.isReleasedWhenClosed = false
-        window.titlebarAppearsTransparent = false
         // A settings window is not resizable in System Settings either; the two
         // columns have one correct width each and nothing gains from dragging.
         window.setContentSize(NSSize(width: 720, height: 480))

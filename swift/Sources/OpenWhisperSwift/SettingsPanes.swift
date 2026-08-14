@@ -217,11 +217,7 @@ private struct ModelRowView: View {
             Spacer(minLength: 8)
 
             if let badge = row.badge {
-                Text(badge)
-                    .font(.caption)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(.quaternary, in: Capsule())
+                StatusBadge(badge)
             } else if let action = row.action {
                 Button(action.title) {
                     switch action {
@@ -229,6 +225,8 @@ private struct ModelRowView: View {
                     case .cancel: model.cancelDownload(row.model)
                     }
                 }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
         }
         .padding(.vertical, 3)
@@ -500,10 +498,36 @@ private struct PermissionRowView: View {
                         request { model.refreshPermissions() }
                     }
                 }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            } else {
+                StatusBadge("Granted")
             }
         }
         .padding(.vertical, 3)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// A non-interactive status chip.
+///
+/// Deliberately built to a small bordered button's metrics -- same height, same
+/// corner radius -- because it shares a column with them. A capsule at caption
+/// size sat visibly higher and smaller than the Download button one row below
+/// it, which made the column look misaligned rather than deliberate.
+private struct StatusBadge: View {
+    let text: String
+
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 9)
+            .frame(height: 20)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
+            .accessibilityLabel(text)
     }
 }
 
