@@ -100,15 +100,10 @@ private struct GeneralPane: View {
             }
 
             Section {
-                Button("Import from Open Whisper (Python)…") { model.importFromPython() }
                 Button("Open Configuration File") { model.openConfigFile() }
                 Button("Show Log") { model.showLog() }
             } header: {
-                Text("Setup and diagnostics")
-            } footer: {
-                Text("Importing brings across your settings and lifetime totals. "
-                     + "It does not change the Python app.")
-                .settingsFootnote()
+                Text("Diagnostics")
             }
         }
         .paneStyle()

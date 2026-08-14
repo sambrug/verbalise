@@ -92,13 +92,6 @@ public actor StatsStore {
         persist()
     }
 
-    /// Replaces both from an import (plan §9 phase 6).
-    public func replace(stats newStats: UsageStats, recent newRecent: [RecentTranscript]) {
-        stats = newStats
-        recent = Array(newRecent.prefix(Self.recentLimit))
-        persist()
-    }
-
     private func persist() {
         let encoder = JSONEncoder()
         try? encoder.encode(stats).write(to: statsURL, options: .atomic)

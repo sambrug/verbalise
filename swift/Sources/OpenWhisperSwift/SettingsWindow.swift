@@ -19,7 +19,6 @@ protocol SettingsDelegate: AnyObject {
     func cancelModelDownload(_ model: TranscriptionModel)
 
     func openConfigFile()
-    func importFromPythonApp()
     func showLog()
 }
 
@@ -276,6 +275,5 @@ final class SettingsModel: ObservableObject {
     }
 
     func openConfigFile() { delegate?.openConfigFile() }
-    func importFromPython() { delegate?.importFromPythonApp() }
     func showLog() { delegate?.showLog() }
 }
