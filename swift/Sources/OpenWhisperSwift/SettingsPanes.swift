@@ -439,6 +439,10 @@ private struct PermissionsPane: View {
                     model: model
                 )
             } header: {
+                // Reading the revision here is what ties this pane to the
+                // poll: it re-renders when the counter moves, which re-reads
+                // each grant. Deliberately not `.id(revision)` -- that rebuilds
+                // the rows from scratch every second and resets their state.
                 Text(model.permissionsNeedAttention
                      ? "Open Whisper needs these to work. macOS grants each one "
                        + "separately, and none can be granted by the app itself."
@@ -451,9 +455,6 @@ private struct PermissionsPane: View {
             }
         }
         .paneStyle()
-        // Redraws on each poll, which is how a grant made in System Settings
-        // shows up here without the user coming back to click something.
-        .id(model.permissionsRevision)
     }
 }
 
