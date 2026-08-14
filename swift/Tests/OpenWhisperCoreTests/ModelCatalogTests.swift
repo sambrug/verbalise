@@ -169,18 +169,21 @@ struct ModelCatalogTests {
     @Test("Every tier's detail names the trade and the size")
     func detailPairsSummaryWithSize() {
         let rows = ModelCatalog.rows(selected: .balanced, downloaded: [.balanced])
-        #expect(rows[0].detail == "Quickest, least accurate · Small · 216 MB")
-        #expect(rows[1].detail == "Balance of speed and accuracy · Large v3 Turbo · 954 MB")
-        #expect(rows[2].detail == "Most accurate, slowest · Large v3 · 3.0 GB")
+        #expect(rows[0].detail == "Quickest, least accurate · Whisper Small · 216 MB")
+        #expect(
+            rows[1].detail
+                == "Balance of speed and accuracy · Whisper Large v3 Turbo · 954 MB"
+        )
+        #expect(rows[2].detail == "Most accurate, slowest · Whisper Large v3 · 3.0 GB")
     }
 
-    @Test("Every tier names its underlying model, without repeating \"Whisper\"")
+    @Test("Every tier names its underlying model in full")
     func variantNamesAreDistinct() {
         let names = TranscriptionModel.allCases.map(\.variantName)
         #expect(Set(names).count == names.count)
-        // The word is the same every time and would add width without
-        // distinguishing anything.
-        #expect(names.allSatisfy { !$0.localizedCaseInsensitiveContains("whisper") })
+        // Named in full rather than abbreviated: "Small" on its own says
+        // nothing to someone who does not already know what is under the app.
+        #expect(names.allSatisfy { $0.hasPrefix("Whisper ") })
     }
 
     @Test("The three summaries are parallel, not one-off descriptions")

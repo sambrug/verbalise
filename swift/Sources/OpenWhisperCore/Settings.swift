@@ -41,18 +41,19 @@ public enum TranscriptionModel: String, CaseIterable, Codable, Sendable {
         ModelCatalog.sizeText(approximateDownloadBytes)
     }
 
-    /// The underlying Whisper model, for the row that already says what the
-    /// tier is for.
+    /// The underlying model, for the row that already says what the tier is
+    /// for.
     ///
-    /// "Whisper" is left off all three: it is the same word every time, so
-    /// including it would add width without distinguishing anything. This is
-    /// there for the person who knows what `large-v3-turbo` is and wants to
-    /// confirm it -- it should not compete with the plain-language summary.
+    /// Named in full. An earlier version dropped "Whisper" as redundant --
+    /// the same word on all three lines, distinguishing nothing -- which was
+    /// true of the list read as a list and wrong for the reader it is there
+    /// for. "Small" alone says nothing to someone who does not already know
+    /// what is under the app; "Whisper Small" tells them what to search for.
     public var variantName: String {
         switch self {
-        case .fast: "Small"
-        case .balanced: "Large v3 Turbo"
-        case .accurate: "Large v3"
+        case .fast: "Whisper Small"
+        case .balanced: "Whisper Large v3 Turbo"
+        case .accurate: "Whisper Large v3"
         }
     }
 
