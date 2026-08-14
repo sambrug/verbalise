@@ -21,15 +21,37 @@ let package = Package(
         .executable(name: "OpenWhisperSwift", targets: ["OpenWhisperSwift"]),
         .library(name: "OpenWhisperCore", targets: ["OpenWhisperCore"]),
     ],
+    dependencies: [
+        // WhisperKit. `argmaxinc/argmax-oss-swift` and `argmaxinc/WhisperKit`
+        // are the same repository -- identical tags and commit SHAs -- which
+        // resolves the open question in plan §4. Pinned rather than ranged:
+        // the model-name mapping in TranscriptionEngine is tied to what a
+        // specific release publishes.
+        .package(url: "https://github.com/argmaxinc/WhisperKit", exact: "1.1.0"),
+    ],
     targets: [
         // All logic lives here so the test target can reach it. The plan's
         // dependency seams (§3) are declared in this module.
+        //
+        // Deliberately dependency-free: the recovery tests exercise this
+        // module and must stay fast to build and run. Nothing here should
+        // ever import WhisperKit.
         .target(name: "OpenWhisperCore"),
+
+        // The WhisperKit adapter, isolated so the heavy dependency stays out
+        // of the logic module and its test cycle.
+        .target(
+            name: "OpenWhisperSpeech",
+            dependencies: [
+                "OpenWhisperCore",
+                .product(name: "WhisperKit", package: "WhisperKit"),
+            ]
+        ),
 
         // Thin shell: lifecycle, wiring, and the AppKit surface.
         .executableTarget(
             name: "OpenWhisperSwift",
-            dependencies: ["OpenWhisperCore"]
+            dependencies: ["OpenWhisperCore", "OpenWhisperSpeech"]
         ),
 
         .testTarget(

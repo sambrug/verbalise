@@ -1,0 +1,191 @@
+import Foundation
+import OpenWhisperCore
+import WhisperKit
+
+/// WhisperKit behind the `Transcriber` seam (plan §3), replacing the Python's
+/// `mlx_whisper` path (daemon.py:1074).
+///
+/// Isolated in its own module so the heavy dependency never reaches
+/// `OpenWhisperCore`, which the recovery tests build against.
+public actor TranscriptionEngine: Transcriber {
+
+    public enum Phase: Sendable, Equatable {
+        case idle
+        /// 0...1, or nil while the total size is still unknown.
+        case downloading(Double?)
+        case loading
+        case ready
+    }
+
+    public enum EngineError: Error, LocalizedError {
+        case modelUnavailable(TranscriptionModel)
+
+        public var errorDescription: String? {
+            switch self {
+            case .modelUnavailable(let model):
+                "No CoreML build of \(model.rawValue) is published."
+            }
+        }
+    }
+
+    private var whisperKit: WhisperKit?
+    private var loadedModel: TranscriptionModel?
+    private var settings: Settings
+    private let onPhase: @Sendable (Phase) -> Void
+
+    public init(
+        settings: Settings = Settings(),
+        onPhase: @escaping @Sendable (Phase) -> Void = { _ in }
+    ) {
+        self.settings = settings
+        self.onPhase = onPhase
+    }
+
+    public func apply(settings: Settings) {
+        // A model change invalidates the loaded instance; everything else
+        // (language, vocabulary) is applied per call and needs no reload.
+        if settings.transcriptionModel != self.settings.transcriptionModel {
+            unload()
+        }
+        self.settings = settings
+    }
+
+    public var isLoaded: Bool { whisperKit != nil }
+
+    // MARK: - Model storage
+
+    /// Where downloaded models live.
+    ///
+    /// Explicitly inside the app container, never `~/.cache/huggingface`. Under
+    /// the sandbox `.applicationSupportDirectory` already resolves into the
+    /// container, so this both satisfies App Store rule 2.5.2 and keeps a
+    /// multi-gigabyte download out of the user's home directory where nothing
+    /// would ever clean it up.
+    private static var modelStorage: URL? {
+        try? FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        ).appendingPathComponent("Models", isDirectory: true)
+    }
+
+    // MARK: - Loading
+
+    /// Downloads if needed, then loads. Safe to call repeatedly.
+    public func ensureLoaded() async throws {
+        let model = settings.transcriptionModel
+        if whisperKit != nil, loadedModel == model { return }
+
+        guard let variant = model.whisperKitModelName else {
+            throw EngineError.modelUnavailable(model)
+        }
+
+        let started = Date()
+        let wasCold = whisperKit == nil
+        unload()
+
+        // Download explicitly rather than letting the config do it implicitly,
+        // so there is a progress figure to show. The Python app's silent
+        // "Loading…" hang on first use of a model is the thing being replaced
+        // here -- a multi-gigabyte download with no feedback reads as a freeze.
+        onPhase(.downloading(nil))
+        let folder = try await WhisperKit.download(
+            variant: variant,
+            downloadBase: Self.modelStorage,
+            progressCallback: { [onPhase] progress in
+                let fraction = progress.fractionCompleted
+                onPhase(.downloading(fraction > 0 ? fraction : nil))
+            }
+        )
+
+        onPhase(.loading)
+        let config = WhisperKitConfig(
+            modelFolder: folder.path,
+            verbose: false,
+            logLevel: .error,
+            prewarm: true,
+            load: true,
+            download: false
+        )
+        whisperKit = try await WhisperKit(config)
+        loadedModel = model
+
+        // Performance parity with the Python (commit c778fd6), which logged
+        // cold vs warm load separately. Peak GPU memory was MLX-specific and
+        // has no WhisperKit equivalent, so it is simply not logged.
+        let elapsed = Date().timeIntervalSince(started)
+        log(String(
+            format: "model: %@ loaded %@ in %.2fs",
+            variant, wasCold ? "cold" : "warm", elapsed
+        ))
+        onPhase(.ready)
+    }
+
+    public func unload() {
+        whisperKit = nil
+        loadedModel = nil
+        onPhase(.idle)
+    }
+
+    // MARK: - Transcribe
+
+    public func transcribe(_ audio: [Float]) async throws -> String {
+        try await ensureLoaded()
+        guard let whisperKit else { return "" }
+
+        let started = Date()
+        let results = try await whisperKit.transcribe(
+            audioArray: audio,
+            decodeOptions: decodingOptions(for: whisperKit)
+        )
+        let text = results.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let elapsed = Date().timeIntervalSince(started)
+        let audioSeconds = Double(audio.count) / Double(max(settings.sampleRate, 1))
+        log(String(
+            format: "transcribe: %.1fs audio in %.2fs (%.1fx realtime)",
+            audioSeconds, elapsed, elapsed > 0 ? audioSeconds / elapsed : 0
+        ))
+        return text
+    }
+
+    private func decodingOptions(for whisperKit: WhisperKit) -> DecodingOptions {
+        var options = DecodingOptions()
+
+        // Distil models are English-only; effectiveLanguage already enforces
+        // that regardless of what the config says.
+        options.language = settings.effectiveLanguage
+        options.task = .transcribe
+
+        // Timestamps are pure overhead here: the transcript is typed straight
+        // into the focused app, never displayed as subtitles.
+        options.withoutTimestamps = true
+
+        // The equivalent of the Python's condition_on_previous_text = false.
+        // Each dictation is transcribed standalone, so no previous window's
+        // text is carried in as context -- which is what stops one dictation's
+        // phrasing bleeding into the next.
+        options.usePrefillPrompt = true
+
+        if let promptTokens = vocabularyPromptTokens(for: whisperKit) {
+            options.promptTokens = promptTokens
+        }
+        return options
+    }
+
+    /// Biases decoding toward the user's domain terms.
+    ///
+    /// The `Vocabulary: a, b.` wording is the exact format the Python uses
+    /// (daemon.py:1087) and is kept verbatim -- prompt phrasing measurably
+    /// changes what the model favours, so this is not a detail to improve on
+    /// while porting.
+    private func vocabularyPromptTokens(for whisperKit: WhisperKit) -> [Int]? {
+        let terms = settings.vocabulary.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        guard !terms.isEmpty, let tokenizer = whisperKit.tokenizer else { return nil }
+
+        let prompt = "Vocabulary: \(terms.joined(separator: ", "))."
+        let tokens = tokenizer.encode(text: prompt)
+        return tokens.isEmpty ? nil : tokens
+    }
+}
