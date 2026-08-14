@@ -31,11 +31,11 @@ struct SettingsRootView: View {
             // width is silently dropped and the column falls back to its
             // 140pt floor, which truncated "Speech Model" to "Speech Mo…".
             //
-            // A floor with room to grow: 200 fits every label, and the divider
+            // A floor with room to grow: 180 fits every label, and the divider
             // still drags wider for anyone who wants it. The range only takes
             // its position from saved state once there is some, which is the
             // right behaviour -- it remembers what you dragged it to.
-            .navigationSplitViewColumnWidth(min: 200, ideal: 200, max: 320)
+            .navigationSplitViewColumnWidth(min: 180, ideal: 180, max: 320)
         } detail: {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -141,7 +141,8 @@ private struct GeneralPane: View {
                 // an arithmetic nobody could see the result of, under two
                 // rows that are plain counts and need no explaining.
                 if timeSaved != nil {
-                    Text("Based on typing at 40 words per minute and speaking at 150.")
+                    Text("Based on typing at 40 words per minute and speaking "
+                         + "at 150 words per minute.")
                         .settingsFootnote()
                 }
             }
@@ -285,15 +286,6 @@ private struct SpeechModelPane: View {
             } header: {
                 Text("Transcription runs on this Mac. Nothing you dictate leaves your device.")
                     .settingsFootnote()
-            } footer: {
-                // Only once there is something to remove. On a fresh install
-                // the only model present is the bundled one, so this was
-                // describing a button that appears nowhere on the pane -- the
-                // same orphaned explanation the usage footnote had.
-                if model.rows.contains(where: \.isRemovable) {
-                    Text("The model included with the app can't be removed.")
-                        .settingsFootnote()
-                }
             }
 
             Section {
