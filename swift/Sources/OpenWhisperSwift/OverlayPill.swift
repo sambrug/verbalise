@@ -219,6 +219,32 @@ struct OverlayContentView: View {
     @ObservedObject var model: OverlayModel
 
     private let cyan = Color(red: 10 / 255, green: 170 / 255, blue: 210 / 255)
+
+    /// How much of the glass material is drawn. 1.0 is full strength.
+    ///
+    /// `.regular` is the thick variant, chosen for its edge lensing; this takes
+    /// some of its density back without giving up the bevel that `.clear`
+    /// cannot produce.
+    private static let glassStrength: Double = 0.75
+
+    /// A capsule-shaped drop shadow, and nothing else.
+    ///
+    /// `.shadow` on the glass container produced a rectangle: SwiftUI derives a
+    /// shadow from what the view renders, and the container reports its
+    /// rectangular bounds rather than the capsule the material draws inside
+    /// them. Stating the shape is the fix.
+    ///
+    /// The capsule is then punched back out of itself with `destinationOut`,
+    /// leaving only the shadow it cast. Without that, a solid fill would sit
+    /// behind semi-transparent glass and darken the pill from within.
+    private var pillShadow: some View {
+        Capsule()
+            .fill(.black)
+            .shadow(color: .black.opacity(0.28), radius: 10, y: 3)
+            .overlay { Capsule().fill(.black).blendMode(.destinationOut) }
+            .compositingGroup()
+    }
+
     private let iconWidth: CGFloat = 20
     private let timerWidth: CGFloat = 38
 
@@ -293,22 +319,17 @@ struct OverlayContentView: View {
                 // continuous glass surface; without it each glass view is
                 // sampled independently and the effect flattens.
                 // `.interactive()` adds the responsive light play.
-                GlassEffectContainer {
-                    pill.glassEffect(.regular.interactive(), in: .capsule)
+                // The material sits behind the content, not over it, so its
+                // strength can be dialled without taking the text and bars
+                // with it. Fading `pill.glassEffect(...)` fades the whole pill
+                // and reads as washed out -- learned twice.
+                pill.background {
+                    GlassEffectContainer {
+                        Color.clear.glassEffect(.regular.interactive(), in: .capsule)
+                    }
+                    .opacity(Self.glassStrength)
+                    .background { pillShadow }
                 }
-                // Elevation. Native Liquid Glass reads as a pane floating
-                // above what it refracts, and the shadow is most of what says
-                // so -- without one the pill sits flat on the desktop like a
-                // decal. The panel cannot supply it (`hasShadow` on a
-                // borderless transparent window draws a rectangle around the
-                // whole thing, not around the capsule), so it belongs here,
-                // outside the container, where it shadows the composited glass
-                // rather than the content sitting on it.
-                //
-                // Deliberately soft and close: a hard shadow reads as a
-                // drop-shadowed rectangle from a decade ago, and glass sits
-                // near the surface it floats over.
-                .shadow(color: .black.opacity(0.22), radius: 10, y: 3)
             } else {
                 // macOS 14/15 have no Liquid Glass; the closest the older
                 // material stack gets.
