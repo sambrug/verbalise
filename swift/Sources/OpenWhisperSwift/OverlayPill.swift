@@ -219,6 +219,15 @@ struct OverlayContentView: View {
     @ObservedObject var model: OverlayModel
 
     private let cyan = Color(red: 10 / 255, green: 170 / 255, blue: 210 / 255)
+
+    /// How much of the glass material is drawn, and so how much of the desktop
+    /// shows through it. 1.0 is the material at full strength.
+    ///
+    /// There is no "frost" knob on `glassEffect` -- `.clear` is already the
+    /// most transmissive variant Apple ships -- so this is the only way to see
+    /// more of what is behind the pill. It costs some of the material's
+    /// presence, which is the trade being made deliberately.
+    private static let glassTransmission: Double = 0.75
     private let iconWidth: CGFloat = 20
     private let timerWidth: CGFloat = 38
 
@@ -282,8 +291,24 @@ struct OverlayContentView: View {
                 // continuous glass surface; without it each glass view is
                 // sampled independently and the effect flattens.
                 // `.interactive()` adds the responsive light play.
-                GlassEffectContainer {
-                    pill.glassEffect(.clear.interactive(), in: .capsule)
+                // The glass sits *behind* the content rather than over it.
+                //
+                // This is the lesson from the previous attempt at "less
+                // frosted": fading `pill.glassEffect(...)` fades the whole
+                // pill, so the text and bars go pale along with the material
+                // and it reads as washed out rather than as clearer. Putting
+                // the material in the background lets it transmit more while
+                // the content on top stays at full strength.
+                //
+                // `glassTransmission` is the one knob — lower shows more of
+                // what is behind, at the cost of the material's presence.
+                pill.background {
+                    GlassEffectContainer {
+                        Capsule()
+                            .fill(.clear)
+                            .glassEffect(.clear.interactive(), in: .capsule)
+                    }
+                    .opacity(Self.glassTransmission)
                 }
                 // Elevation. Native Liquid Glass reads as a pane floating
                 // above what it refracts, and the shadow is most of what says
