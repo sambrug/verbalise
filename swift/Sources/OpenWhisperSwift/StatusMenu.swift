@@ -139,7 +139,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     /// Deliberately not the Python app's icon (menubar.py:334) so the two are
     /// tellable apart at a glance while both are installed.
     private func showIdleIcon() {
-        setIcon("waveform", describing: Self.appName)
+        setIcon("waveform.circle.fill", describing: Self.appName)
     }
 
     // MARK: - Refresh
@@ -153,9 +153,14 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         case .idle:
             stateItem.title = readyTitle
             showIdleIcon()
+        // Recording and transcribing share a glyph. The menu bar only has to
+        // say that something is happening; which of the two it is belongs in
+        // the menu, where there is room to name it. Hollow against a filled
+        // resting state reads as a change without adding a second thing to
+        // learn.
         case .recording:
             stateItem.title = "Recording…"
-            setIcon("waveform.circle.fill", describing: "Recording")
+            setIcon("waveform.circle", describing: "Recording")
         case .transcribing:
             stateItem.title = "Transcribing…"
             setIcon("waveform.circle", describing: "Transcribing")
