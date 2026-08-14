@@ -16,7 +16,7 @@ public enum TextPipeline {
     ///
     /// Ported verbatim from TRAILING_HALLUCINATION_PATTERNS (daemon.py:75).
     /// All are anchored to the end of the string and case-insensitive.
-    nonisolated(unsafe) static let trailingHallucinationPatterns: [NSRegularExpression] = [
+    static let trailingHallucinationPatterns: [NSRegularExpression] = [
         #"\s*\bthanks for watching\b[\.\,\!\?]*\s*$"#,
         #"\s*\bthank you\b[\.\,\!\?]*\s*$"#,
         #"\s*\bthanks\b[\.\,\!\?]*\s*$"#,
@@ -35,12 +35,12 @@ public enum TextPipeline {
         #"(?:\s+[\.…]+){2,}\s*$"#,
     ].map { try! NSRegularExpression(pattern: $0, options: [.caseInsensitive]) }
 
-    nonisolated(unsafe) static let punctuationOnly =
+    static let punctuationOnly =
         try! NSRegularExpression(pattern: #"^[\s\.\,\!\?…]*$"#)
 
     /// Trailing sentence-ending punctuation, optionally followed by a closing
     /// quote or bracket, at the very end of a string (daemon.py:161).
-    nonisolated(unsafe) static let trailingSentenceEnd =
+    static let trailingSentenceEnd =
         try! NSRegularExpression(pattern: #"[.!?]+(['")\]]*)$"#)
 
     // MARK: - Repetition loop detection
