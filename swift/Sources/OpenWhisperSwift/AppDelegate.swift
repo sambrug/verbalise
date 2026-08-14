@@ -325,6 +325,79 @@ extension AppDelegate: StatusMenuDelegate {
         NSWorkspace.shared.open(url)
     }
 
+    /// Brings settings and lifetime stats across from the Python app.
+    ///
+    /// The user picks the folder, which is what makes reading outside the
+    /// container sandbox-legal — the grant comes from their selection, not
+    /// from an entitlement (plan §9 phase 6).
+    func importFromPythonApp() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Import"
+        panel.message = "Choose the Python app's data folder "
+            + "(Application Support ▸ Open Whisper)."
+
+        // Points at the usual location, but the user is free to go elsewhere —
+        // this is a starting point, not a restriction.
+        if let support = try? FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask,
+            appropriateFor: nil, create: false
+        ) {
+            panel.directoryURL = support.appendingPathComponent("Open Whisper")
+        }
+
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let directory = panel.url else { return }
+
+        let result = PythonImport.read(from: directory, into: settings)
+        guard result.importedSomething else {
+            presentImportResult(result, summary: "Nothing was imported.")
+            return
+        }
+
+        var summaryParts: [String] = []
+        if let imported = result.settings {
+            apply(settings: imported)
+            summaryParts.append("settings")
+        }
+        if let importedStats = result.stats, let importedRecent = result.recent {
+            summaryParts.append("\(importedStats.totalRecordings) recordings")
+            replaceStats(importedStats, recent: importedRecent)
+        } else if let importedStats = result.stats {
+            summaryParts.append("\(importedStats.totalRecordings) recordings")
+            replaceStats(importedStats, recent: cachedRecent)
+        }
+
+        presentImportResult(result, summary: "Imported \(summaryParts.joined(separator: " and ")).")
+    }
+
+    private func replaceStats(_ newStats: UsageStats, recent newRecent: [RecentTranscript]) {
+        guard let stats else { return }
+        Task {
+            await stats.replace(stats: newStats, recent: newRecent)
+            cachedStats = await stats.stats
+            cachedRecent = await stats.recent
+            lastTranscript = cachedRecent.first?.text
+            if let text = lastTranscript { menu?.show(lastTranscript: text) }
+        }
+    }
+
+    /// Always shown, including the notes. An import that silently skipped the
+    /// user's vocabulary would be discovered much later, and by then they would
+    /// have no idea why it was missing.
+    private func presentImportResult(_ result: PythonImport.Result, summary: String) {
+        let alert = NSAlert()
+        alert.messageText = summary
+        alert.informativeText = result.notes.isEmpty
+            ? "Everything found was brought across."
+            : result.notes.joined(separator: "\n\n")
+        alert.alertStyle = result.importedSomething ? .informational : .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
     /// Relaunches. Replaces the Python supervisor's restart, and is what the
     /// escalation alert points the user at when the audio subsystem wedges.
     func restart() {

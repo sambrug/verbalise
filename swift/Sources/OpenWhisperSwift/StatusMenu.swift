@@ -17,6 +17,7 @@ protocol StatusMenuDelegate: AnyObject {
     func clearRecentTranscripts()
     func restart()
     func openConfigFile()
+    func importFromPythonApp()
 }
 
 @MainActor
@@ -101,6 +102,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         add(to: menu, title: "Permissions…", action: #selector(showPermissions))
+        add(to: menu, title: "Import from Open Whisper (Python)…",
+            action: #selector(importFromPython))
         add(to: menu, title: "Open Config", action: #selector(openConfig))
         add(to: menu, title: "View Logs", action: #selector(viewLogs))
         add(to: menu, title: "Launch at Login", action: #selector(toggleLoginItem))
@@ -480,6 +483,10 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     @objc private func showPermissions() {
         OnboardingWindow.show()
+    }
+
+    @objc private func importFromPython() {
+        delegate?.importFromPythonApp()
     }
 
     @objc private func restart() {
