@@ -71,6 +71,13 @@ public actor DictationController {
     private var stopStartedAt: Double?
     private var maxDurationTask: Task<Void, Never>?
 
+    /// Streaming transcription, when enabled. Chunks are cut at natural pauses
+    /// while the user is still speaking, so the wait after key release does not
+    /// grow with how long they talked.
+    private var streamer: StreamingTranscriber?
+    /// How far into `buffer` has already been handed to the streamer.
+    private var streamerLastCut = 0
+
     public init(
         session: AudioSession,
         transcriber: any Transcriber,
@@ -101,6 +108,24 @@ public actor DictationController {
         guard state == .recording else { return }
         buffer.append(contentsOf: samples)
         lastAudioAt = clock.now
+        cutChunkIfPaused()
+    }
+
+    /// Hands everything since the last cut to the streamer when the speaker
+    /// pauses at what looks like a sentence boundary.
+    ///
+    /// The bar is deliberately high -- 400ms of quiet after at least 2s of
+    /// speech -- so a pause for breath does not split a sentence in two and
+    /// leave Whisper transcribing each half without the other's context.
+    private func cutChunkIfPaused() {
+        guard let streamer else { return }
+        guard let gap = Silence.gapIndex(
+            buffer, sampleRate: settings.sampleRate, startIndex: streamerLastCut
+        ) else { return }
+
+        let chunk = Array(buffer[streamerLastCut..<gap])
+        streamerLastCut = gap
+        Task { await streamer.feed(chunk) }
     }
 
     /// Test seam: place the controller in the state `startRecording` would have
@@ -127,6 +152,10 @@ public actor DictationController {
         generation += 1
         let gen = generation
         buffer.removeAll()
+        streamerLastCut = 0
+        streamer = settings.advanced.streamingTranscribeEnabled
+            ? StreamingTranscriber(transcriber: transcriber)
+            : nil
         recordStartedAt = clock.now
         lastAudioAt = clock.now
         state = .recording
@@ -192,7 +221,7 @@ public actor DictationController {
         }
 
         do {
-            let raw = try await transcriber.transcribe(audio)
+            let raw = try await finishTranscription(audio)
 
             // The dictation may have been abandoned while the model was
             // working. Typing now would insert text into whatever the user
@@ -226,10 +255,40 @@ public actor DictationController {
         finish(gen: gen)
     }
 
+    /// Produces the transcript, using whatever the streamer already did.
+    ///
+    /// Falls back to one whole-clip pass if any chunk failed. A transcript with
+    /// a silently missing sentence in the middle is worse than a slow one, and
+    /// the user has no way to tell the difference from the text alone.
+    private func finishTranscription(_ audio: [Float]) async throws -> String {
+        guard let streamer, streamerLastCut > 0 else {
+            // Nothing was streamed -- either disabled, or the dictation was
+            // too short to reach a sentence boundary.
+            return try await transcriber.transcribe(audio)
+        }
+
+        // The tail after the last cut, if anyone actually spoke in it. Handing
+        // Whisper a silent run-off invites a hallucinated "Thanks for
+        // watching." on the end of the user's text.
+        let tail = Array(audio[min(streamerLastCut, audio.count)...])
+        if Silence.hasVoice(tail) {
+            await streamer.feed(tail)
+        }
+
+        let chunks = await streamer.drain()
+        if await streamer.failed {
+            log("streaming: a chunk failed, falling back to a single pass")
+            return try await transcriber.transcribe(audio)
+        }
+        return TextPipeline.joinStreamingChunks(chunks)
+    }
+
     private func finish(gen: Int) {
         guard generation == gen else { return }
         state = .idle
         stopStartedAt = nil
+        streamer = nil
+        streamerLastCut = 0
         emit(.pill(.hide))
         emit(.state(.idle))
     }
@@ -270,6 +329,11 @@ public actor DictationController {
         state = .idle
         stopStartedAt = nil
         buffer.removeAll()
+        // Drop the streamer too. Its in-flight chunks belong to a dictation
+        // that no longer exists, and keeping it alive would both occupy the
+        // model and risk its results being joined into the next one.
+        streamer = nil
+        streamerLastCut = 0
         cancelMaxDurationTimer()
         emit(.pill(.hide))
         emit(.state(.idle))
@@ -350,4 +414,11 @@ public actor DictationController {
     }
 
     public var _generationForTest: Int { generation }
+
+    /// Test seam: `_prepareForTest` bypasses `startRecording`, which is where
+    /// the streamer is normally created.
+    public func startStreamingForTest() {
+        streamer = StreamingTranscriber(transcriber: transcriber)
+        streamerLastCut = 0
+    }
 }

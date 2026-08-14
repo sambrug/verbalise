@@ -135,6 +135,19 @@ public enum Silence {
         return nil
     }
 
+    /// Whether a span carries anything worth transcribing.
+    ///
+    /// Uses the Python's SILENCE_RMS_THRESHOLD (daemon.py:63). Sending a silent
+    /// tail to Whisper is not merely wasteful: given silence it invents
+    /// "outro" phrases from its subtitle training data, so the quiet run-off
+    /// after the last word becomes a hallucinated "Thanks for watching."
+    public static func hasVoice(_ audio: [Float], threshold: Float = 0.002) -> Bool {
+        guard !audio.isEmpty else { return false }
+        var sum: Float = 0
+        for sample in audio { sum += sample * sample }
+        return (sum / Float(audio.count)).squareRoot() >= threshold
+    }
+
     static func rms(_ audio: [Float], from start: Int, length: Int) -> Float {
         var sum: Float = 0
         for i in start..<(start + length) {

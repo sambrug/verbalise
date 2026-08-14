@@ -176,6 +176,70 @@ struct DictationControllerTests {
         #expect(opener.opened.first?.startCount == 1)
     }
 
+    // MARK: - Streaming integration
+
+    /// Counts calls so a test can tell streamed chunks from one whole-clip pass.
+    final class CountingTranscriber: Transcriber, @unchecked Sendable {
+        private let lock = NSLock()
+        private var _calls: [Int] = []
+
+        /// Sample counts, one entry per transcribe call.
+        var calls: [Int] {
+            lock.lock(); defer { lock.unlock() }
+            return _calls
+        }
+
+        func transcribe(_ audio: [Float]) async throws -> String {
+            lock.withLock { _calls.append(audio.count) }
+            return "chunk"
+        }
+    }
+
+    static func speech(seconds: Double) -> [Float] {
+        let count = Int(Double(sampleRate) * seconds)
+        return (0..<count).map { $0 % 2 == 0 ? Float(0.2) : Float(-0.2) }
+    }
+
+    static func quiet(seconds: Double) -> [Float] {
+        [Float](repeating: 0, count: Int(Double(sampleRate) * seconds))
+    }
+
+    @Test("a pause mid-dictation is streamed before the key is released")
+    func pauseIsStreamedEarly() async {
+        // The whole point of streaming: by the time the user lets go, most of
+        // what they said has already been transcribed, so the wait does not
+        // grow with how long they talked.
+        let transcriber = CountingTranscriber()
+        let h = Self.makeHarness(transcriber: transcriber)
+
+        await h.controller._prepareForTest(stream: HealthyStream(), audio: [])
+        await h.controller.startStreamingForTest()
+
+        // 3s of speech, a clear sentence boundary, then more speech.
+        await h.controller.appendAudio(Self.speech(seconds: 3))
+        await h.controller.appendAudio(Self.quiet(seconds: 0.6))
+        await h.controller.appendAudio(Self.speech(seconds: 1))
+
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(!transcriber.calls.isEmpty, "a chunk should already have been sent")
+    }
+
+    @Test("with streaming off, the clip is transcribed in one pass")
+    func streamingDisabledUsesSinglePass() async {
+        let transcriber = CountingTranscriber()
+        var settings = Settings()
+        settings.advanced.streamingTranscribeEnabled = false
+        settings.advanced.clipboardRestoreDelay = 0
+
+        let h = Self.makeHarness(transcriber: transcriber)
+        await h.controller.apply(settings: settings)
+        await h.controller._prepareForTest(stream: HealthyStream(), audio: Self.audio)
+        await h.controller.stopAndTranscribe()
+
+        #expect(transcriber.calls.count == 1, "expected one pass, got \(transcriber.calls.count)")
+        #expect(transcriber.calls.first == Self.audio.count)
+    }
+
     // MARK: - 4. Escape
 
     @Test("escape on a stalled stop: state reset, nothing typed")

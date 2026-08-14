@@ -153,6 +153,14 @@ final class FakeClipboard: Pasteboard, @unchecked Sendable {
     /// does this when it is busy (daemon.py:277).
     var refuseWrites: Bool
 
+    /// Refuse this many writes, then start accepting them.
+    ///
+    /// Deterministic on purpose: the earlier version of this fake was flipped
+    /// by a background timer racing the retry loop's own delays, which made
+    /// the retry test fail intermittently under load. Counting attempts tests
+    /// the same behaviour without depending on wall-clock timing at all.
+    var refuseFirstWrites = 0
+
     /// Invoked after each successful read, so a test can simulate another app
     /// taking the pasteboard between our write and the paste keystroke.
     var onRead: (@Sendable () -> Void)?
@@ -194,6 +202,10 @@ final class FakeClipboard: Pasteboard, @unchecked Sendable {
     @discardableResult
     func write(_ text: String) -> Bool {
         if refuseWrites { return false }
+        if refuseFirstWrites > 0 {
+            refuseFirstWrites -= 1
+            return false
+        }
         lock.lock()
         _value = text
         _changeCount += 1

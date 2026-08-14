@@ -90,19 +90,32 @@ struct TextInserterTests {
         // The pasteboard server is often only briefly busy, so a single
         // failure must not be treated as final.
         let keyboard = FakeKeyboard()
-        let clipboard = FakeClipboard(refuseWrites: true)
+        let clipboard = FakeClipboard()
+        // Fail the first two attempts, succeed on the third.
+        clipboard.refuseFirstWrites = 2
         let inserter = TextInserter(keyboard: keyboard, pasteboard: clipboard)
-
-        // Let the first two attempts fail, then recover.
-        Task {
-            try? await Task.sleep(for: .milliseconds(100))
-            clipboard.refuseWrites = false
-        }
 
         let outcome = await inserter.insert(Self.long, settings: Self.settings())
 
         #expect(outcome.path == .pasted)
         #expect(keyboard.pasteCount == 1)
+        #expect(clipboard.writes == [Self.long], "only the successful write should land")
+    }
+
+    @Test("giving up takes the full retry budget, not the first failure")
+    func retriesAreExhaustedBeforeGivingUp() async {
+        // One transient refusal must not lose the dictation, so the budget has
+        // to actually be spent before the paste is abandoned.
+        let keyboard = FakeKeyboard()
+        let clipboard = FakeClipboard()
+        clipboard.refuseFirstWrites = 99
+        let inserter = TextInserter(keyboard: keyboard, pasteboard: clipboard)
+
+        let outcome = await inserter.insert(Self.long, settings: Self.settings())
+
+        #expect(outcome.path == .notInserted)
+        #expect(keyboard.pasteCount == 0)
+        #expect(clipboard.value == "PREVIOUS CLIPBOARD")
     }
 
     // MARK: - Hijack before paste
