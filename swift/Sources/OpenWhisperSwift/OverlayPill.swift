@@ -217,6 +217,7 @@ struct VisualEffectView: NSViewRepresentable {
 
 struct OverlayContentView: View {
     @ObservedObject var model: OverlayModel
+    let material: OverlayMaterial
 
     private let cyan = Color(red: 10 / 255, green: 170 / 255, blue: 210 / 255)
     private let iconWidth: CGFloat = 20
@@ -268,22 +269,30 @@ struct OverlayContentView: View {
         .animation(.easeInOut(duration: 0.45), value: isRecording)
 
         Group {
-            if #available(macOS 26.0, *) {
-                // Pure clear glass — no cyan tint. Lets the Liquid Glass
-                // refraction read clearly. The cyan brand colour comes
-                // through the icon and the recording dot.
-                //
-                // `.interactive()` adds the responsive light play that makes
-                // the material read as glass rather than as a blur, and the
-                // GlassEffectContainer is what lets the system render it as a
-                // single continuous surface — without the container each glass
-                // view is sampled independently and the effect flattens.
+            // `.clear` refracts what is behind it; `.regular` is the frosted
+            // variant and reads as a translucent panel. `.frosted` is the
+            // pre-Tahoe NSVisualEffectView path, kept selectable because it is
+            // the one that unambiguously samples behind the window — if it
+            // looks *more* see-through than the glass options, that says the
+            // glass is not getting a desktop backdrop in this borderless panel.
+            //
+            // GlassEffectContainer lets the system render the shape as one
+            // continuous glass surface; without it each glass view is sampled
+            // independently and the effect flattens. `.interactive()` adds the
+            // responsive light play.
+            //
+            // Legibility comes from the content, not the background: the icon
+            // and timer draw in .primary and the bars at 0.85 opacity, so they
+            // stay readable over whatever shows through.
+            if #available(macOS 26.0, *), material != .frosted {
                 GlassEffectContainer {
-                    pill.glassEffect(.regular.interactive(), in: .capsule)
+                    if material == .clear {
+                        pill.glassEffect(.clear.interactive(), in: .capsule)
+                    } else {
+                        pill.glassEffect(.regular.interactive(), in: .capsule)
+                    }
                 }
             } else {
-                // macOS 14/15 have no Liquid Glass; this is the closest the
-                // older material stack gets.
                 pill.background(
                     ZStack {
                         VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
@@ -347,6 +356,7 @@ final class OverlayPill {
     private var hostingView: TransparentHostingView<OverlayContentView>?
     private var style: OverlayStyle
 
+    private var material: OverlayMaterial
     private let meter: LevelMeter
     private var levelTimer: Timer?
 
@@ -362,23 +372,27 @@ final class OverlayPill {
     /// slowness back for judder.
     private static let levelSampleInterval: TimeInterval = 1.0 / 20.0
 
-    init(style: OverlayStyle, meter: LevelMeter) {
+    init(style: OverlayStyle, material: OverlayMaterial, meter: LevelMeter) {
         self.style = style
+        self.material = material
         self.meter = meter
     }
 
-    /// Live config reload. A style change rebuilds the panel, since translucent
-    /// and solid are different view hierarchies.
-    func apply(style newStyle: OverlayStyle) {
-        guard newStyle != style else { return }
+    /// Live config reload. Either change rebuilds the panel: the materials are
+    /// different view hierarchies, so swapping one in place is not possible.
+    func apply(style newStyle: OverlayStyle, material newMaterial: OverlayMaterial) {
+        guard newStyle != style || newMaterial != material else { return }
         style = newStyle
+        material = newMaterial
         teardown()
     }
 
     private func makePanelIfNeeded() {
         guard panel == nil, style != .off else { return }
 
-        let view = TransparentHostingView(rootView: OverlayContentView(model: model))
+        let view = TransparentHostingView(
+            rootView: OverlayContentView(model: model, material: material)
+        )
         view.frame = NSRect(x: 0, y: 0, width: 320, height: 48)
         view.wantsLayer = true
         view.layer?.isOpaque = false

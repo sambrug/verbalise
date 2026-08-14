@@ -120,7 +120,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let meter = LevelMeter()
 
     private func buildStack() {
-        pill = OverlayPill(style: settings.overlayStyle, meter: meter)
+        pill = OverlayPill(
+            style: settings.overlayStyle,
+            material: settings.advanced.overlayMaterial,
+            meter: meter
+        )
 
         let engine = TranscriptionEngine(settings: settings) { phase in
             Task { @MainActor in AppDelegate.shared?.show(phase: phase) }
@@ -286,7 +290,10 @@ extension AppDelegate: StatusMenuDelegate {
             keyTap?.update(combo: combo)
         }
         if old.overlayStyle != newSettings.overlayStyle {
-            pill?.apply(style: newSettings.overlayStyle)
+            pill?.apply(
+                style: newSettings.overlayStyle,
+                material: newSettings.advanced.overlayMaterial
+            )
         }
 
         // A device or sample-rate change needs a new stream, and both are fixed

@@ -315,6 +315,23 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         addToggle(title: "Recording Overlay",
                   on: settings.overlayStyle == .on,
                   action: #selector(toggleOverlay))
+
+        // Selectable because how glassy the pill looks is a judgement that
+        // needs looking at, and rebuilding between each look is a poor way to
+        // make it.
+        let materialMenu = NSMenu()
+        for option in OverlayMaterial.allCases {
+            let item = NSMenuItem(
+                title: option.displayName,
+                action: #selector(pickOverlayMaterial(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = option.rawValue
+            item.state = settings.advanced.overlayMaterial == option ? .on : .off
+            materialMenu.addItem(item)
+        }
+        addSubmenu(to: settingsMenu, title: "Overlay Material", submenu: materialMenu)
         addToggle(title: "Streaming Transcribe",
                   on: settings.advanced.streamingTranscribeEnabled,
                   action: #selector(toggleStreaming))
@@ -403,6 +420,12 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     @objc private func pickInputDevice(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String else { return }
         mutate { $0.inputDevice = name.isEmpty ? nil : name }
+    }
+
+    @objc private func pickOverlayMaterial(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let material = OverlayMaterial(rawValue: raw) else { return }
+        mutate { $0.advanced.overlayMaterial = material }
     }
 
     @objc private func toggleOverlay() {
