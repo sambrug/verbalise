@@ -144,6 +144,38 @@ struct DictationControllerTests {
         #expect(elapsed < 2.0, "bounded, took \(elapsed)s")
     }
 
+    @Test("startRecording starts the stream exactly once")
+    func streamStartedExactlyOnce() async {
+        // The opener returns an unstarted stream and the controller starts it.
+        // When both did, AVAudioEngine raised from installTapOnBus on the
+        // second call and killed the process the moment the trigger key was
+        // pressed — a crash no unit test caught, because the fake tolerated it.
+        let opener = HealthyOpener()
+        let h = Self.makeHarness(opener: opener)
+
+        await h.controller.startRecording()
+
+        #expect(opener.openCount == 1)
+        let stream = try? #require(opener.opened.first)
+        #expect(stream?.startCount == 1, "started \(stream?.startCount ?? -1) times")
+        #expect(await h.controller.state == .recording)
+    }
+
+    @Test("a reopened stream is also started exactly once")
+    func reopenedStreamStartedOnce() async {
+        // captureHealthCheck opens a replacement; same ownership rule applies.
+        let opener = HealthyOpener()
+        let h = Self.makeHarness(opener: opener)
+        await h.controller.setCaptureHealthDelay(.seconds(3))
+
+        await h.controller._prepareForTest(stream: HealthyStream(), audio: [])
+        h.clock.advance(by: 5)
+        await h.controller.captureHealthCheck()
+
+        #expect(opener.openCount == 1)
+        #expect(opener.opened.first?.startCount == 1)
+    }
+
     // MARK: - 4. Escape
 
     @Test("escape on a stalled stop: state reset, nothing typed")

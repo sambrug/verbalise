@@ -34,6 +34,15 @@ enum OpenWhisperApp {
             return
         }
 
+        // Opens a capture stream exactly as a dictation would, records briefly,
+        // and reports what arrived. Reproduces the audio path without needing a
+        // keypress, so a failure in it prints its own exception rather than
+        // only leaving a crash report behind.
+        if CommandLine.arguments.contains("--test-capture") {
+            testCapture()
+            return
+        }
+
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
@@ -84,6 +93,42 @@ enum OpenWhisperApp {
         }
     }
 
+    private static func testCapture() {
+        let settings = SettingsStore()?.load().settings ?? Settings()
+        print("Opening capture at \(settings.sampleRate)Hz, device=\(settings.inputDevice ?? "system default")")
+
+        // Mirror the app: it pre-warms at launch, so a real dictation is
+        // always the *second* stream this process opens.
+        if CommandLine.arguments.contains("--prewarm-first") {
+            print("Pre-warming…")
+            AudioPrewarm.run(sampleRate: Double(settings.sampleRate))
+            print("Pre-warm returned.")
+        }
+
+        let counter = SampleCounter()
+        let opener = AVAudioCaptureOpener(
+            sampleRate: Double(settings.sampleRate),
+            deviceName: settings.inputDevice,
+            onSamples: { counter.add($0.count) }
+        )
+
+        do {
+            let stream = try opener.open()
+            // The opener returns an unstarted stream; the caller starts it,
+            // exactly as DictationController does.
+            try stream.start()
+            print("Stream opened and started. Recording 2s…")
+            Thread.sleep(forTimeInterval: 2)
+            print("Received \(counter.total) samples "
+                  + "(~\(String(format: "%.2f", Double(counter.total) / Double(settings.sampleRate)))s)")
+            stream.abort()
+            stream.close()
+            print("Stream closed cleanly.")
+        } catch {
+            print("FAILED to open: \(error)")
+        }
+    }
+
     private static func listDevices() {
         let devices = AudioDevices.inputDevices()
         let defaultDevice = AudioDevices.defaultInputDevice()
@@ -114,5 +159,20 @@ private final class ErrorBox: @unchecked Sendable {
 
     func set(_ error: any Error) {
         lock.lock(); stored = error; lock.unlock()
+    }
+}
+
+/// Counts samples delivered from the realtime audio thread.
+private final class SampleCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var total: Int {
+        lock.lock(); defer { lock.unlock() }
+        return count
+    }
+
+    func add(_ n: Int) {
+        lock.lock(); count += n; lock.unlock()
     }
 }

@@ -218,13 +218,13 @@ public struct AVAudioCaptureOpener: AudioStreamOpening {
             }
         }
 
-        let stream = AVAudioCaptureStream(
+        // Deliberately not started here -- see AudioStreamOpening. The caller
+        // starts it once it knows the dictation is still wanted.
+        return AVAudioCaptureStream(
             targetSampleRate: sampleRate,
             deviceID: resolved,
             onSamples: onSamples,
             onLevel: onLevel
         )
-        try stream.start()
-        return stream
     }
 }

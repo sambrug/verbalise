@@ -31,20 +31,37 @@ final class WedgedStream: AudioStream, @unchecked Sendable {
 }
 
 final class HealthyStream: AudioStream, @unchecked Sendable {
+    /// Raised on a second `start()`, mirroring AVAudioEngine.
+    ///
+    /// The real engine throws an Objective-C exception from
+    /// `installTapOnBus` when a tap is already installed on that bus, which
+    /// terminates the process rather than surfacing as a Swift error. A fake
+    /// that quietly tolerated a double start would let exactly that crash
+    /// through the suite — it did, once.
+    struct StartedTwice: Error {}
+
     private let lock = NSLock()
     private var _closed = false
-    private var _started = false
+    private var _startCount = 0
 
     var closed: Bool {
         lock.lock(); defer { lock.unlock() }
         return _closed
     }
-    var started: Bool {
+    var started: Bool { startCount > 0 }
+    var startCount: Int {
         lock.lock(); defer { lock.unlock() }
-        return _started
+        return _startCount
     }
 
-    func start() throws { lock.lock(); _started = true; lock.unlock() }
+    func start() throws {
+        lock.lock()
+        _startCount += 1
+        let count = _startCount
+        lock.unlock()
+        if count > 1 { throw StartedTwice() }
+    }
+
     func abort() {}
     func stop() {}
     func close() { lock.lock(); _closed = true; lock.unlock() }

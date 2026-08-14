@@ -25,6 +25,13 @@ public protocol AudioStream: AnyObject, Sendable {
 /// Opens input streams. Opening blocks too -- when a previous teardown is still
 /// parked inside the audio subsystem, the *open* blocks behind it, silently,
 /// because nothing is logged until the stream is live (daemon.py:149-153).
+///
+/// **The returned stream is not started.** The caller owns `start()`, because
+/// only the caller knows whether the dictation is still wanted by the time the
+/// open returns -- a bounded open can be abandoned while it is in flight, and
+/// a stream started by the opener would already be capturing into nothing.
+/// Starting twice is not harmless: `AVAudioEngine` raises on a second
+/// `installTapOnBus` for the same bus.
 public protocol AudioStreamOpening: Sendable {
     func open() throws -> any AudioStream
 }
