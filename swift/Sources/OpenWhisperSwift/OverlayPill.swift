@@ -269,21 +269,32 @@ struct OverlayContentView: View {
 
         Group {
             if #available(macOS 26.0, *) {
-                // Full-strength `.clear` glass, wrapping the content.
+                // `.regular`, the standard Liquid Glass material.
                 //
-                // An earlier version applied it as a faded background to go
-                // "less frosted". That was the wrong reading of the ask: fading
-                // glass does not make it clearer, it makes it *paler* — the
-                // refraction weakens along with everything else and the pill
-                // just looks washed out. Drawing the material at full strength
-                // is what gives it presence.
+                // This went `.regular` -> `.clear` -> back again, and the round
+                // trip is the useful part. `.clear` is the most transmissive
+                // variant Apple ships, so it shows the most desktop -- but it
+                // is also thin, and the edge lensing that makes glass read as
+                // a physical object is a property of the material's thickness.
+                // Wanting "more bevel" and "more clarity" at once is wanting
+                // two ends of one dial. `.regular` picks the bevel.
+                //
+                // There is no bevel parameter to reach for instead: the Glass
+                // API offers the variant, `.tint` and `.interactive`, and
+                // nothing else. Anything more would have to be a painted-on
+                // rim, which is not refraction and looks like it.
+                //
+                // Fading the material is not a third option either -- it makes
+                // the pill paler rather than clearer, since the refraction
+                // weakens along with everything else. Tried twice, reverted
+                // twice.
                 //
                 // GlassEffectContainer lets the system render the shape as one
                 // continuous glass surface; without it each glass view is
                 // sampled independently and the effect flattens.
                 // `.interactive()` adds the responsive light play.
                 GlassEffectContainer {
-                    pill.glassEffect(.clear.interactive(), in: .capsule)
+                    pill.glassEffect(.regular.interactive(), in: .capsule)
                 }
                 // Elevation. Native Liquid Glass reads as a pane floating
                 // above what it refracts, and the shadow is most of what says

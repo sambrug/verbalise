@@ -190,8 +190,11 @@ Beyond plan §10's accepted list:
   Old configs naming `solid` or `translucent` load as on.
 - **The pill is no longer a verbatim port.** Plan §1 put its look off-limits
   for redesign, and that held through the initial port — but the solid variant
-  has since been removed, the glass moved from `.regular` to `.clear`, and the
-  level feed rewritten to sample at a fixed rate. Those were deliberate
+  has since been removed, the glass gained a shadow it never had, and the
+  level feed was rewritten to sample at a fixed rate. The material went
+  `.regular` → `.clear` → `.regular`: `.clear` shows more of the desktop but
+  is thin, and the edge lensing that makes glass read as an object comes from
+  thickness. There is no bevel parameter, so the variant is the whole choice. Those were deliberate
   decisions taken after seeing it run, not drift, but the "unchanged
   rendering" guarantee in §1 no longer holds. `overlay.swift` at the repo root
   is unmodified and still drives the Python app, so the two now render
