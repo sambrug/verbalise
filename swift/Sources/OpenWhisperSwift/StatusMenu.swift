@@ -7,7 +7,6 @@ import OpenWhisperCore
 /// the delegate is meant to stay a wiring layer.
 @MainActor
 protocol StatusMenuDelegate: AnyObject {
-    var currentStats: UsageStats { get }
     var currentRecent: [RecentTranscript] { get }
     var lastTranscript: String? { get }
 
@@ -25,8 +24,6 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     private let stateItem = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
     private let alertItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let lastItem = NSMenuItem(title: "No dictations yet", action: nil, keyEquivalent: "")
-    private let statsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-    private let timeSavedItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let recentMenu = NSMenu()
 
     /// Persistent alert shown as a scrolling line (menubar.py:1022). Cleared
@@ -95,13 +92,6 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        statsItem.isEnabled = false
-        menu.addItem(statsItem)
-        timeSavedItem.isEnabled = false
-        menu.addItem(timeSavedItem)
-
-        menu.addItem(.separator())
-
         add(to: menu, title: "Restart", action: #selector(restart))
         add(to: menu, title: "Quit Open Whisper Swift", action: #selector(quit), key: "q")
 
@@ -122,7 +112,6 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         rebuildRecent()
-        refreshStatsLines()
     }
 
     func show(state: DictationState) {
@@ -234,17 +223,6 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         let clear = NSMenuItem(title: "Clear", action: #selector(clearRecent), keyEquivalent: "")
         clear.target = self
         recentMenu.addItem(clear)
-    }
-
-    private func refreshStatsLines() {
-        let stats = delegate?.currentStats ?? UsageStats()
-        statsItem.title = StatsFormatter.formatStats(stats)
-        if let saved = StatsFormatter.formatTimeSaved(stats) {
-            timeSavedItem.title = saved
-            timeSavedItem.isHidden = false
-        } else {
-            timeSavedItem.isHidden = true
-        }
     }
 
     // MARK: - Actions

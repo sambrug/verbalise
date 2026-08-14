@@ -328,7 +328,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension AppDelegate: StatusMenuDelegate {
 
-    var currentStats: UsageStats { cachedStats }
     var currentRecent: [RecentTranscript] { cachedRecent }
 
     func showSettings() {
@@ -341,6 +340,7 @@ extension AppDelegate: StatusMenuDelegate {
 extension AppDelegate: SettingsDelegate {
 
     var currentSettings: Settings { settings }
+    var currentStats: UsageStats { cachedStats }
 
     /// Which tiers are on disk. Asked fresh rather than cached: a download that
     /// finished a second ago must show as available, and the answer is a

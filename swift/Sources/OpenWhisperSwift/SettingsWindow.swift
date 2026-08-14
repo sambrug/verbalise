@@ -11,6 +11,7 @@ import SwiftUI
 @MainActor
 protocol SettingsDelegate: AnyObject {
     var currentSettings: OpenWhisperCore.Settings { get }
+    var currentStats: UsageStats { get }
     func apply(settings: OpenWhisperCore.Settings)
 
     var downloadedModels: Set<TranscriptionModel> { get }
@@ -191,6 +192,7 @@ final class SettingsModel: ObservableObject {
 
     @Published var selection: SettingsPane = .general
     @Published private(set) var settings: OpenWhisperCore.Settings
+    @Published private(set) var stats = UsageStats()
     @Published private(set) var rows: [ModelRow] = []
     @Published private(set) var inputDevices: [String] = []
     @Published private(set) var launchesAtLogin = false
@@ -213,6 +215,7 @@ final class SettingsModel: ObservableObject {
     func refresh() {
         guard let delegate else { return }
         settings = delegate.currentSettings
+        stats = delegate.currentStats
         rows = ModelCatalog.rows(
             selected: settings.transcriptionModel,
             downloaded: delegate.downloadedModels,

@@ -100,6 +100,24 @@ private struct GeneralPane: View {
             }
 
             Section {
+                LabeledContent("Dictations",
+                               value: StatsFormatter.grouped(model.stats.totalRecordings))
+                LabeledContent("Words",
+                               value: StatsFormatter.grouped(model.stats.totalWords))
+                // Only once there is enough to be worth saying. "0 minutes" on
+                // a fresh install is a worse greeting than no row at all.
+                if let saved = StatsFormatter.timeSaved(model.stats) {
+                    LabeledContent("Time saved typing", value: saved)
+                }
+            } header: {
+                Text("Usage")
+            } footer: {
+                Text("Time saved compares typing at 40 words a minute with "
+                     + "speaking at 150. It is indicative, not a measurement.")
+                .settingsFootnote()
+            }
+
+            Section {
                 Button("Open Configuration File") { model.openConfigFile() }
                 Button("Show Log") { model.showLog() }
             } header: {

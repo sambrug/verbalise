@@ -43,7 +43,7 @@ public enum StatsFormatter {
         return f
     }()
 
-    private static func grouped(_ value: Int) -> String {
+    public static func grouped(_ value: Int) -> String {
         wordFormatter.string(from: NSNumber(value: value)) ?? String(value)
     }
 
@@ -61,6 +61,16 @@ public enum StatsFormatter {
     /// they would take to say. It ignores time spent fixing misrecognitions, so
     /// it is indicative rather than a real productivity measure.
     public static func formatTimeSaved(_ usage: UsageStats) -> String? {
+        timeSaved(usage).map { "\($0) saved typing" }
+    }
+
+    /// The duration alone -- "3 hours" -- for a settings row that already has
+    /// "Time saved typing" as its label, where the full sentence would say it
+    /// twice.
+    ///
+    /// The phrasing above is built from this, so the two cannot disagree about
+    /// rounding or pluralisation.
+    public static func timeSaved(_ usage: UsageStats) -> String? {
         guard usage.totalWords > 0 else { return nil }
 
         let savedMinutes = Double(usage.totalWords) * (1 / typingWPM - 1 / speakingWPM)
@@ -68,10 +78,10 @@ public enum StatsFormatter {
 
         if savedMinutes < 60 {
             let minutes = Int(pythonRound(savedMinutes))
-            return "\(minutes) \(minutes == 1 ? "minute" : "minutes") saved typing"
+            return "\(minutes) \(minutes == 1 ? "minute" : "minutes")"
         }
         let hours = Int(pythonRound(savedMinutes / 60))
-        return "\(hours) \(hours == 1 ? "hour" : "hours") saved typing"
+        return "\(hours) \(hours == 1 ? "hour" : "hours")"
     }
 
     /// Python's `round()` is banker's rounding -- half goes to the nearest
