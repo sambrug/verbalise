@@ -106,18 +106,10 @@ public final class AVAudioCaptureStream: AudioStream, @unchecked Sendable {
             pcmFormat: targetFormat, frameCapacity: capacity
         ) else { return }
 
-        var consumed = false
         var error: NSError?
+        let source = SingleBufferSource(buffer)
         converter.convert(to: output, error: &error) { _, status in
-            // The converter asks repeatedly; feeding the same buffer twice
-            // would duplicate audio, so the second ask reports starvation.
-            if consumed {
-                status.pointee = .noDataNow
-                return nil
-            }
-            consumed = true
-            status.pointee = .haveData
-            return buffer
+            source.next(status)
         }
 
         guard error == nil, output.frameLength > 0,
@@ -146,6 +138,35 @@ public final class AVAudioCaptureStream: AudioStream, @unchecked Sendable {
         guard status == noErr else {
             throw AudioCaptureError.deviceSelectionFailed(status)
         }
+    }
+}
+
+/// Feeds one buffer to `AVAudioConverter` and then reports starvation.
+///
+/// The converter asks for input repeatedly until it has enough frames;
+/// handing it the same buffer twice would duplicate audio, so every ask after
+/// the first must answer `.noDataNow`.
+///
+/// `@unchecked Sendable` is accurate rather than a shortcut: the converter's
+/// input block is typed `@Sendable`, but `convert(to:error:withInputFrom:)`
+/// invokes it *synchronously* on the calling thread before returning. There is
+/// no concurrent access to guard against, and a lock here would sit on the
+/// realtime audio thread for no reason.
+private final class SingleBufferSource: @unchecked Sendable {
+    private var buffer: AVAudioPCMBuffer?
+
+    init(_ buffer: AVAudioPCMBuffer) {
+        self.buffer = buffer
+    }
+
+    func next(_ status: UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioPCMBuffer? {
+        guard let pending = buffer else {
+            status.pointee = .noDataNow
+            return nil
+        }
+        buffer = nil
+        status.pointee = .haveData
+        return pending
     }
 }
 

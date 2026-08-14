@@ -35,13 +35,15 @@ public actor StreamingTranscriber {
         nextIndex += 1
         chunkCount += 1
 
+        // `Task {}` inside an actor method inherits this actor's isolation, so
+        // store/markFailed need no await — only the transcription does.
         let task = Task { [transcriber] in
             do {
                 let text = try await transcriber.transcribe(audio)
-                await self.store(text, at: index)
+                self.store(text, at: index)
             } catch {
                 log("streaming: chunk \(index) transcribe failed — \(error)")
-                await self.markFailed(at: index)
+                self.markFailed(at: index)
             }
         }
         inFlight.append(task)
