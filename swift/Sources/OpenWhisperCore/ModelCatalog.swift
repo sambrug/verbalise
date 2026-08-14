@@ -26,9 +26,19 @@ public struct ModelRow: Equatable, Sendable {
     public let model: TranscriptionModel
     public let availability: ModelAvailability
 
-    public init(model: TranscriptionModel, availability: ModelAvailability) {
+    /// Whether there is a downloaded copy that could be deleted. False for the
+    /// tier bundled inside the app, which is read-only and is what makes a
+    /// fresh install work with no network.
+    public let isRemovable: Bool
+
+    public init(
+        model: TranscriptionModel,
+        availability: ModelAvailability,
+        isRemovable: Bool = false
+    ) {
         self.model = model
         self.availability = availability
+        self.isRemovable = isRemovable
     }
 
     public var title: String { model.displayName }
@@ -55,8 +65,8 @@ public struct ModelRow: Equatable, Sendable {
     /// Whether the row's trailing control is a button, and what it does.
     public var action: Action? {
         switch availability {
-        case .inUse: nil          // A badge, not a button.
-        case .ready: nil          // Selecting the row is the whole interaction.
+        case .inUse: nil                            // A badge, not a button.
+        case .ready: isRemovable ? .remove : nil    // Selecting is a row tap.
         case .downloading: .cancel
         case .absent: .download
         }
@@ -65,13 +75,20 @@ public struct ModelRow: Equatable, Sendable {
     public enum Action: Equatable, Sendable {
         case download
         case cancel
+        /// Only ever offered on a downloaded tier that is not in use, so it
+        /// never has to unload a model mid-dictation.
+        case remove
 
         public var title: String {
             switch self {
             case .download: "Download"
             case .cancel: "Cancel"
+            case .remove: "Remove"
             }
         }
+
+        /// Deleting gigabytes is worth marking as the destructive one.
+        public var isDestructive: Bool { self == .remove }
     }
 
     /// Shown instead of a button when the model is the one in use.
@@ -110,10 +127,13 @@ public enum ModelCatalog {
     ///     this set in a real build, but not in a development build, so it is
     ///     passed in rather than assumed.
     ///   - downloading: in-flight downloads and their progress.
+    ///   - removable: which models have a deletable downloaded copy. A subset
+    ///     of `downloaded`: the bundled tier is present but not removable.
     public static func rows(
         selected: TranscriptionModel,
         downloaded: Set<TranscriptionModel>,
-        downloading: [TranscriptionModel: Double?] = [:]
+        downloading: [TranscriptionModel: Double?] = [:],
+        removable: Set<TranscriptionModel> = []
     ) -> [ModelRow] {
         TranscriptionModel.allCases.map { model in
             ModelRow(
@@ -123,7 +143,8 @@ public enum ModelCatalog {
                     selected: selected,
                     downloaded: downloaded,
                     downloading: downloading
-                )
+                ),
+                isRemovable: removable.contains(model)
             )
         }
     }

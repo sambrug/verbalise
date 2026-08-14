@@ -45,10 +45,8 @@ struct SettingsRootView: View {
     private var detail: some View {
         switch model.selection {
         case .general: GeneralPane(model: model)
-        case .triggerKey: TriggerKeyPane(model: model)
+        case .dictation: DictationPane(model: model)
         case .speechModel: SpeechModelPane(model: model)
-        case .audio: AudioPane(model: model)
-        case .textOutput: TextOutputPane(model: model)
         case .vocabulary: VocabularyPane(model: model)
         case .permissions: PermissionsPane(model: model)
         }
@@ -97,8 +95,11 @@ private struct GeneralPane: View {
                     get: { model.launchesAtLogin },
                     set: { model.setLaunchesAtLogin($0) }
                 )) {
+                    // No subtitle: the label says the whole thing, and the one
+                    // that was here described the app rather than the switch.
+                    // System Settings' own Login Items rows carry no
+                    // explanation either.
                     Text("Open at login")
-                    Text("No window and no Dock icon — just the menu bar.")
                 }
 
                 Toggle(isOn: model.binding(\.overlayStyle, as: { $0 == .on }, to: { $0 ? .on : .off })) {
@@ -130,9 +131,8 @@ private struct GeneralPane: View {
                 // an arithmetic nobody could see the result of, under two
                 // rows that are plain counts and need no explaining.
                 if timeSaved != nil {
-                    Text("Based on typing at 40 words a minute and speaking at "
-                         + "150. It's a rough guide, not a stopwatch.")
-                    .settingsFootnote()
+                    Text("Based on typing at 40 words a minute and speaking at 150.")
+                        .settingsFootnote()
                 }
             }
 
@@ -156,9 +156,14 @@ private struct GeneralPane: View {
     }
 }
 
-// MARK: - Trigger key
+// MARK: - Dictation
 
-private struct TriggerKeyPane: View {
+/// Trigger, microphone and output in one place.
+///
+/// These were three panes with four controls between them. Beyond the empty
+/// rooms, splitting them hid the fact that the trigger key and the microphone
+/// are the two things a new user actually has to get right.
+private struct DictationPane: View {
     @ObservedObject var model: SettingsModel
 
     var body: some View {
@@ -168,15 +173,54 @@ private struct TriggerKeyPane: View {
                     get: { model.settings.triggerKey },
                     set: { new in model.change { $0.triggerKey = new } }
                 )) {
-                    ForEach(options, id: \.configValue) { combo in
+                    ForEach(triggerOptions, id: \.configValue) { combo in
                         Text(combo.displayName).tag(combo.configValue)
                     }
                 }
+            } header: {
+                Text("Trigger Key")
             } footer: {
                 Text("Hold it while you speak, then let go — your words "
                      + "appear wherever you were typing.\n"
-                     + "Press Escape mid-recording to throw it away.")
+                     + "Press Escape to stop dictation without inserting anything.")
                 .settingsFootnote()
+            }
+
+            Section {
+                Picker("Microphone", selection: deviceSelection) {
+                    Text("System Default").tag("")
+                    Divider()
+                    ForEach(model.inputDevices, id: \.self) { name in
+                        Text(name).tag(name)
+                    }
+                }
+
+                Toggle(isOn: model.binding(\.advanced.trimSilenceEnabled)) {
+                    Text("Trim silence")
+                    Text("Cuts the quiet at either end before transcribing.")
+                }
+            } header: {
+                Text("Microphone")
+            } footer: {
+                Text(missingDeviceNote ?? "System Default follows your Sound settings, "
+                     + "so a headset works the moment you plug it in.")
+                .settingsFootnote()
+            }
+
+            Section {
+                Toggle(isOn: model.binding(\.advanced.streamingTranscribeEnabled)) {
+                    Text("Transcribe while you speak")
+                    Text("Gets a head start on long dictations, so there's "
+                         + "less to wait for when you let go.")
+                }
+
+                Toggle(isOn: model.binding(\.advanced.fastTypingEnabled)) {
+                    Text("Type short results directly")
+                    Text("Short results are typed straight in. Longer ones are "
+                         + "pasted, and your clipboard is put back afterwards.")
+                }
+            } header: {
+                Text("Text Output")
             }
         }
         .paneStyle()
@@ -185,8 +229,28 @@ private struct TriggerKeyPane: View {
     /// Combinations are offered alongside single keys, and whatever is
     /// configured is always in the list -- a hand-edited pairing must be
     /// selectable rather than leaving the picker showing something else.
-    private var options: [TriggerCombo] {
+    private var triggerOptions: [TriggerCombo] {
         TriggerCombo.pickerOptions(including: model.settings.triggerCombo)
+    }
+
+    /// The empty string stands for "System Default", because `Picker` needs a
+    /// concrete tag and the setting's own absence is nil.
+    private var deviceSelection: Binding<String> {
+        Binding(
+            get: { model.settings.inputDevice ?? "" },
+            set: { new in model.change { $0.inputDevice = new.isEmpty ? nil : new } }
+        )
+    }
+
+    /// A configured microphone that is not plugged in stays selected and stays
+    /// visible. Silently falling back to the default is how you end up recording
+    /// from the wrong device without ever being told.
+    private var missingDeviceNote: String? {
+        guard let configured = model.settings.inputDevice,
+              !model.inputDevices.contains(configured)
+        else { return nil }
+        return "“\(configured)” isn't connected. Recording falls back to the "
+            + "system default until it is."
     }
 }
 
@@ -202,15 +266,37 @@ private struct SpeechModelPane: View {
                     ModelRowView(row: row, model: model)
                 }
             } header: {
-                Text("Transcription runs on this Mac. Nothing you say is sent to a server.")
+                Text("Transcription runs on this Mac. Nothing you dictate leaves your device.")
                     .settingsFootnote()
             } footer: {
-                Text("Models are stored inside the app, so deleting it "
-                     + "removes them too.")
+                Text("Downloaded models can be removed here. The one included "
+                     + "with the app stays put.")
                     .settingsFootnote()
+            }
+
+            Section {
+                Picker("Language", selection: Binding(
+                    get: { model.settings.language },
+                    set: { new in model.change { $0.language = new } }
+                )) {
+                    ForEach(languages) { language in
+                        Text(language.name).tag(language.code)
+                    }
+                }
+            } footer: {
+                Text("Automatic works out the language from what it hears, "
+                     + "which costs a little accuracy on short phrases. Pick "
+                     + "one if you always dictate in the same language.")
+                .settingsFootnote()
             }
         }
         .paneStyle()
+    }
+
+    /// The common set, plus whatever the config already names -- a hand-edited
+    /// code has to stay selected rather than quietly reading as something else.
+    private var languages: [Language] {
+        Language.pickerOptions(including: model.settings.language)
     }
 }
 
@@ -248,10 +334,11 @@ private struct ModelRowView: View {
             if let badge = row.badge {
                 StatusBadge(badge)
             } else if let action = row.action {
-                Button(action.title) {
+                Button(action.title, role: action.isDestructive ? .destructive : nil) {
                     switch action {
                     case .download: model.download(row.model)
                     case .cancel: model.cancelDownload(row.model)
+                    case .remove: model.remove(row.model)
                     }
                 }
                 .buttonStyle(.bordered)
@@ -268,83 +355,6 @@ private struct ModelRowView: View {
     }
 }
 
-// MARK: - Audio
-
-private struct AudioPane: View {
-    @ObservedObject var model: SettingsModel
-
-    /// The empty string stands for "System Default", because `Picker` needs a
-    /// concrete tag and the setting's own absence is nil.
-    private var deviceSelection: Binding<String> {
-        Binding(
-            get: { model.settings.inputDevice ?? "" },
-            set: { new in model.change { $0.inputDevice = new.isEmpty ? nil : new } }
-        )
-    }
-
-    var body: some View {
-        Form {
-            Section {
-                Picker("Microphone", selection: deviceSelection) {
-                    Text("System Default").tag("")
-                    Divider()
-                    ForEach(model.inputDevices, id: \.self) { name in
-                        Text(name).tag(name)
-                    }
-                }
-            } footer: {
-                Text(missingDeviceNote ?? "System Default follows your Sound settings, "
-                     + "so a headset works the moment you plug it in.")
-                .settingsFootnote()
-            }
-
-            Section {
-                Toggle(isOn: model.binding(\.advanced.trimSilenceEnabled)) {
-                    Text("Trim silence")
-                    Text("Cuts the quiet at either end before transcribing.")
-                }
-            }
-        }
-        .paneStyle()
-    }
-
-    /// A configured microphone that is not plugged in stays selected and stays
-    /// visible. Silently falling back to the default is how you end up recording
-    /// from the wrong device without ever being told.
-    private var missingDeviceNote: String? {
-        guard let configured = model.settings.inputDevice,
-              !model.inputDevices.contains(configured)
-        else { return nil }
-        return "“\(configured)” isn't connected. Recording falls back to the "
-            + "system default until it is."
-    }
-}
-
-// MARK: - Text output
-
-private struct TextOutputPane: View {
-    @ObservedObject var model: SettingsModel
-
-    var body: some View {
-        Form {
-            Section {
-                Toggle(isOn: model.binding(\.advanced.streamingTranscribeEnabled)) {
-                    Text("Transcribe while you speak")
-                    Text("Gets a head start on long dictations, so there's "
-                         + "less to wait for when you let go.")
-                }
-
-                Toggle(isOn: model.binding(\.advanced.fastTypingEnabled)) {
-                    Text("Type short results directly")
-                    Text("Short results are typed straight in. Longer ones are "
-                         + "pasted, and your clipboard is put back afterwards.")
-                }
-            }
-        }
-        .paneStyle()
-    }
-}
-
 // MARK: - Vocabulary
 
 private struct VocabularyPane: View {
@@ -355,7 +365,7 @@ private struct VocabularyPane: View {
             Section {
                 DebouncedEditor(
                     text: VocabularyText.format(model.settings.vocabulary),
-                    placeholder: "Anthropic\nKubernetes\nFNOL",
+                    placeholder: "Siobhan\nKubernetes\nKPI",
                     model: model
                 ) { text in
                     model.change { $0.vocabulary = VocabularyText.parse(text) }
@@ -370,7 +380,7 @@ private struct VocabularyPane: View {
             Section {
                 DebouncedEditor(
                     text: PhoneticText.format(model.settings.phoneticCorrections),
-                    placeholder: "ethanol: FNOL\nsequel: SQL",
+                    placeholder: "get hub: GitHub\nsequel: SQL",
                     model: model
                 ) { text in
                     model.change { $0.phoneticCorrections = PhoneticText.parse(text) }
@@ -501,10 +511,6 @@ private struct PermissionsPane: View {
                      ? "macOS asks for each of these separately, and only you "
                        + "can grant them — Open Whisper can't do it for itself."
                      : readyMessage)
-                .settingsFootnote()
-            } footer: {
-                Text("This updates as you go, so you can leave it open next "
-                     + "to System Settings.")
                 .settingsFootnote()
             }
         }

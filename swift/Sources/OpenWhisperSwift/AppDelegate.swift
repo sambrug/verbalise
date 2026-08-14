@@ -161,7 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         self.engine = engine
         self.controller = controller
-        menu?.show(status: "Ready")
+        menu?.show(state: .idle)
     }
 
     /// Rebuilt whenever the device or sample rate changes, since both are fixed
@@ -223,7 +223,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard let combo = settings.triggerCombo else {
             log("config: trigger_key '\(settings.triggerKey)' is invalid, key tap not started")
-            menu?.show(alert: "Trigger key '\(settings.triggerKey)' is not valid.")
+            menu?.show(alert: "'\(settings.triggerKey)' isn't a trigger key Open Whisper recognises.")
             return
         }
 
@@ -234,7 +234,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         keyTap = tap.start() ? tap : nil
         if keyTap == nil {
-            menu?.show(alert: "Input Monitoring is not granted — the trigger key will not work.")
+            menu?.show(alert: "Input Monitoring isn't granted, so the trigger key won't work.")
         }
     }
 
@@ -248,7 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // and let them try again in a moment.
             if case .downloading = enginePhase {
                 log("dictation: refused, model still downloading")
-                menu?.show(alert: "Downloading the speech model — dictation will work once it finishes.")
+                menu?.show(alert: "Still downloading the speech model. Dictation will work once it's done.")
                 return
             }
             if settings.soundEnabled { Sounds.playStart() }
@@ -337,6 +337,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 extension AppDelegate: StatusMenuDelegate {
 
     var currentRecent: [RecentTranscript] { cachedRecent }
+    var triggerDisplayName: String? { settings.triggerCombo?.displayName }
 
     func showSettings() {
         SettingsWindow.show(delegate: self)
@@ -374,6 +375,17 @@ extension AppDelegate: SettingsDelegate {
 
     func cancelModelDownload(_ model: TranscriptionModel) {
         Task { await downloader.cancel(model) }
+    }
+
+    var removableModels: Set<TranscriptionModel> {
+        // Never the model in use: removing what is loaded would leave the next
+        // dictation with nothing to transcribe with, and the pane offers no
+        // way to ask for that.
+        TranscriptionEngine.removableModels.subtracting([settings.transcriptionModel])
+    }
+
+    func removeModel(_ model: TranscriptionModel) {
+        TranscriptionEngine.removeDownload(model)
     }
 
     func showLog() {
@@ -426,7 +438,7 @@ extension AppDelegate: SettingsDelegate {
             // seam that exists purely for this.
             buildStack()
         }
-        menu?.show(status: "Ready")
+        menu?.show(state: .idle)
     }
 
     func clearRecentTranscripts() {
@@ -453,7 +465,7 @@ extension AppDelegate: SettingsDelegate {
             Task { @MainActor in
                 if let error {
                     log("restart failed: \(error.localizedDescription)")
-                    AppDelegate.shared?.menu?.show(alert: "Restart failed — quit and reopen.")
+                    AppDelegate.shared?.menu?.show(alert: "Restart didn't work — quit and reopen.")
                 } else {
                     NSApp.terminate(nil)
                 }

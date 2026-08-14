@@ -76,6 +76,47 @@ public actor TranscriptionEngine: Transcriber {
         Set(TranscriptionModel.allCases.filter(isDownloaded))
     }
 
+    /// Which tiers can be deleted to reclaim space.
+    ///
+    /// Downloaded copies only. The bundled tier lives inside the app bundle,
+    /// which is read-only under the sandbox and is the reason a fresh install
+    /// works with no network -- removing it is neither possible nor wanted.
+    public nonisolated static var removableModels: Set<TranscriptionModel> {
+        Set(TranscriptionModel.allCases.filter { downloadFolder(for: $0) != nil })
+    }
+
+    /// The container copy of a model, if there is one. Never the bundled copy.
+    private nonisolated static func downloadFolder(for model: TranscriptionModel) -> URL? {
+        guard let storage = modelStorage else { return nil }
+        let folder = storage
+            .appendingPathComponent("models/argmaxinc/whisperkit-coreml", isDirectory: true)
+            .appendingPathComponent(model.whisperKitModelName, isDirectory: true)
+        return FileManager.default.fileExists(atPath: folder.path) ? folder : nil
+    }
+
+    /// Deletes a downloaded model, reclaiming its disk.
+    ///
+    /// Without this a model could be fetched and never removed: the `accurate`
+    /// tier is three gigabytes, and deleting the whole app was the only way to
+    /// get it back.
+    ///
+    /// Never called for the model in use — the pane offers Remove only on a
+    /// tier that is downloaded and not selected, so this cannot pull the
+    /// engine's own files out from under it.
+    @discardableResult
+    public nonisolated static func removeDownload(_ model: TranscriptionModel) -> Bool {
+        guard let folder = downloadFolder(for: model) else { return false }
+        do {
+            try FileManager.default.removeItem(at: folder)
+            log("model: removed downloaded \(model.whisperKitModelName)")
+            return true
+        } catch {
+            log("model: could not remove \(model.whisperKitModelName) — "
+                + error.localizedDescription)
+            return false
+        }
+    }
+
     // MARK: - Model storage
 
     /// Where downloaded models live.

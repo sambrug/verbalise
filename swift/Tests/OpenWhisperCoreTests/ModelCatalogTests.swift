@@ -34,7 +34,61 @@ struct ModelCatalogTests {
         let fast = rows.first { $0.model == .fast }
         #expect(fast?.availability == .ready)
         #expect(fast?.badge == nil)
+        // Bundled, so nothing to reclaim: selecting the row is the whole
+        // interaction.
         #expect(fast?.action == nil)
+    }
+
+    @Test("A downloaded model that is not in use can be removed")
+    func downloadedAndUnselectedOffersRemove() {
+        // Without this the accurate tier is three gigabytes that only deleting
+        // the whole app reclaims.
+        let rows = ModelCatalog.rows(
+            selected: .balanced,
+            downloaded: [.balanced, .accurate],
+            removable: [.accurate]
+        )
+        let accurate = rows.first { $0.model == .accurate }
+        #expect(accurate?.availability == .ready)
+        #expect(accurate?.action == .remove)
+        #expect(accurate?.action?.title == "Remove")
+        #expect(accurate?.action?.isDestructive == true)
+    }
+
+    @Test("The model in use is never offered for removal")
+    func inUseIsNotRemovable() {
+        // Deleting the loaded model's files would leave the next dictation
+        // with nothing to transcribe with.
+        let rows = ModelCatalog.rows(
+            selected: .accurate,
+            downloaded: [.accurate],
+            removable: [.accurate]
+        )
+        #expect(rows.first { $0.model == .accurate }?.action == nil)
+    }
+
+    @Test("A bundled model offers no removal even though it is downloaded")
+    func bundledIsNotRemovable() {
+        // It lives in the app bundle, which is read-only under the sandbox and
+        // is what makes a fresh install work offline.
+        let rows = ModelCatalog.rows(
+            selected: .fast,
+            downloaded: [.fast, .balanced],
+            removable: []
+        )
+        #expect(rows.first { $0.model == .balanced }?.action == nil)
+        #expect(rows.first { $0.model == .balanced }?.isRemovable == false)
+    }
+
+    @Test("A download in flight is never mistaken for something to remove")
+    func downloadingIsNotRemovable() {
+        let rows = ModelCatalog.rows(
+            selected: .balanced,
+            downloaded: [.balanced],
+            downloading: [.accurate: 0.3],
+            removable: [.accurate]
+        )
+        #expect(rows.first { $0.model == .accurate }?.action == .cancel)
     }
 
     @Test("A model that is not on disk offers a download")

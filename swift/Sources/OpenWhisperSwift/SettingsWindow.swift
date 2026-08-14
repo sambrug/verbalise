@@ -18,6 +18,9 @@ protocol SettingsDelegate: AnyObject {
     var modelDownloads: [TranscriptionModel: Double?] { get }
     func downloadModel(_ model: TranscriptionModel)
     func cancelModelDownload(_ model: TranscriptionModel)
+    /// Deletes a downloaded model. Only ever called for one not in use.
+    func removeModel(_ model: TranscriptionModel)
+    var removableModels: Set<TranscriptionModel> { get }
 
     func openConfigFile()
     func showLog()
@@ -134,12 +137,16 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
 
 // MARK: - Panes
 
+/// Five panes, not seven.
+///
+/// Trigger Key, Audio and Text Output were three panes holding four controls
+/// between them -- a sidebar navigating to near-empty rooms. They are one
+/// Dictation pane now, which also puts the trigger key next to the microphone,
+/// since those are the pair people reason about together.
 enum SettingsPane: String, CaseIterable, Identifiable, Hashable {
     case general
-    case triggerKey
+    case dictation
     case speechModel
-    case audio
-    case textOutput
     case vocabulary
     case permissions
 
@@ -148,10 +155,8 @@ enum SettingsPane: String, CaseIterable, Identifiable, Hashable {
     var title: String {
         switch self {
         case .general: "General"
-        case .triggerKey: "Trigger Key"
+        case .dictation: "Dictation"
         case .speechModel: "Speech Model"
-        case .audio: "Audio"
-        case .textOutput: "Text Output"
         case .vocabulary: "Vocabulary"
         case .permissions: "Permissions"
         }
@@ -160,10 +165,8 @@ enum SettingsPane: String, CaseIterable, Identifiable, Hashable {
     var symbol: String {
         switch self {
         case .general: "switch.2"
-        case .triggerKey: "keyboard.fill"
+        case .dictation: "mic.fill"
         case .speechModel: "sparkles"
-        case .audio: "mic.fill"
-        case .textOutput: "text.cursor"
         case .vocabulary: "book.fill"
         case .permissions: "lock.fill"
         }
@@ -173,10 +176,8 @@ enum SettingsPane: String, CaseIterable, Identifiable, Hashable {
     var tint: Color {
         switch self {
         case .general: .gray
-        case .triggerKey: .indigo
+        case .dictation: .orange
         case .speechModel: .purple
-        case .audio: .orange
-        case .textOutput: .blue
         case .vocabulary: .brown
         case .permissions: .secondary
         }
@@ -233,7 +234,8 @@ final class SettingsModel: ObservableObject {
         rows = ModelCatalog.rows(
             selected: settings.transcriptionModel,
             downloaded: delegate.downloadedModels,
-            downloading: delegate.modelDownloads
+            downloading: delegate.modelDownloads,
+            removable: delegate.removableModels
         )
         inputDevices = AudioDevices.inputDevices().map(\.name)
         launchesAtLogin = LoginItem.isEnabled
@@ -284,6 +286,11 @@ final class SettingsModel: ObservableObject {
 
     func cancelDownload(_ model: TranscriptionModel) {
         delegate?.cancelModelDownload(model)
+        refresh()
+    }
+
+    func remove(_ model: TranscriptionModel) {
+        delegate?.removeModel(model)
         refresh()
     }
 

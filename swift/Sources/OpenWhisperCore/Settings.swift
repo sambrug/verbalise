@@ -243,12 +243,19 @@ public struct Settings: Codable, Equatable, Sendable {
             .map { (misheard: $0.key, correct: $0.value) }
     }
 
-    /// The language to request.
+    /// The language to request, or nil to let Whisper detect it.
     ///
     /// The Python forced `en` for its distil models, which were English-only
     /// (daemon.py:1078). None of the three tiers here is English-only, so that
     /// clamp no longer applies and the configured language is always honoured.
-    public var effectiveLanguage: String { language }
+    ///
+    /// Optional because "Automatic" is a real choice rather than a missing
+    /// one: WhisperKit detects the language when given no code, which is what
+    /// a bilingual user wants and what a single-language user should not pay
+    /// for.
+    public var effectiveLanguage: String? {
+        language == Language.automaticCode ? nil : language
+    }
 }
 
 // MARK: - Validation

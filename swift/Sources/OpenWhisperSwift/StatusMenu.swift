@@ -9,6 +9,8 @@ import OpenWhisperCore
 protocol StatusMenuDelegate: AnyObject {
     var currentRecent: [RecentTranscript] { get }
     var lastTranscript: String? { get }
+    /// e.g. "Right Option + Right Shift", for the idle status line.
+    var triggerDisplayName: String? { get }
 
     func clearRecentTranscripts()
     func showSettings()
@@ -42,20 +44,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
-        // Deliberately not the Python app's icon (menubar.py:334) so the two
-        // are tellable apart at a glance while both are installed.
-        //
-        // The point size matters: an SF Symbol at its default size renders
-        // noticeably smaller than the system's own menu bar glyphs, which made
-        // it look shrunken next to them. 16pt matches their optical weight.
-        let configuration = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
-        let icon = NSImage(
-            systemSymbolName: "waveform", accessibilityDescription: Self.appName
-        )?.withSymbolConfiguration(configuration)
-        icon?.isTemplate = true
-        statusItem.button?.image = icon
-
         build()
+        showIdleIcon()
     }
 
     // MARK: - Building
@@ -99,11 +89,13 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         // act on in the moment — state, the last transcript, Quit — stays
         // here. A submenu could not show a model downloading, could not hold
         // the permission rows, and made every toggle a four-level hover.
+        // About above Settings, then Quit last: the order of the App menu
+        // every Mac app has, which is the one arrangement people already know.
+        add(to: menu, title: "About \(Self.appName)", action: #selector(showAbout))
         add(to: menu, title: "Settings…", action: #selector(showSettings), key: ",")
 
         menu.addItem(.separator())
 
-        add(to: menu, title: "About \(Self.appName)", action: #selector(showAbout))
         add(to: menu, title: "Quit \(Self.appName)", action: #selector(quit), key: "q")
 
         statusItem.menu = menu
@@ -119,6 +111,37 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         return item
     }
 
+    // MARK: - The menu bar icon
+
+    /// The icon is the only thing that says "this is recording" when the
+    /// overlay is switched off.
+    ///
+    /// Without it, turning off "Show recording overlay" left nothing anywhere
+    /// on screen to say the microphone was live -- on an app whose whole
+    /// interface is a held key, with no window to look at. The menu bar item is
+    /// always visible by definition, which makes it the right place.
+    ///
+    /// The point size matters: an SF Symbol at its default size renders
+    /// noticeably smaller than the system's own menu bar glyphs, which made it
+    /// look shrunken next to them. 16pt matches their optical weight.
+    private static let symbolConfiguration =
+        NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
+
+    private func setIcon(_ name: String, describing description: String) {
+        let icon = NSImage(systemSymbolName: name, accessibilityDescription: description)?
+            .withSymbolConfiguration(Self.symbolConfiguration)
+        // Template so the menu bar tints it, including inverted while the menu
+        // is open and dimmed in a Stage Manager background.
+        icon?.isTemplate = true
+        statusItem.button?.image = icon
+    }
+
+    /// Deliberately not the Python app's icon (menubar.py:334) so the two are
+    /// tellable apart at a glance while both are installed.
+    private func showIdleIcon() {
+        setIcon("waveform", describing: Self.appName)
+    }
+
     // MARK: - Refresh
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -127,10 +150,26 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     func show(state: DictationState) {
         switch state {
-        case .idle: stateItem.title = "Ready"
-        case .recording: stateItem.title = "Recording…"
-        case .transcribing: stateItem.title = "Transcribing…"
+        case .idle:
+            stateItem.title = readyTitle
+            showIdleIcon()
+        case .recording:
+            stateItem.title = "Recording…"
+            setIcon("waveform.circle.fill", describing: "Recording")
+        case .transcribing:
+            stateItem.title = "Transcribing…"
+            setIcon("waveform.circle", describing: "Transcribing")
         }
+    }
+
+    /// The idle line names the trigger key.
+    ///
+    /// "Ready" on its own told nobody anything they could not see from the app
+    /// being in the menu bar at all. Which key to hold is the one thing people
+    /// forget about a hold-to-talk app, and this row was already there.
+    private var readyTitle: String {
+        guard let combo = delegate?.triggerDisplayName else { return "Ready" }
+        return "Ready — hold \(combo)"
     }
 
     func show(status: String) {
