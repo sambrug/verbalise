@@ -65,7 +65,7 @@ anyone who prefers to work in the IDE.
 | 1. Scaffold + sandbox proof | **Done + verified** (`f258e48`) | Builds, signs sandboxed, runs. Both TCC-gated behaviours confirmed working — see below. |
 | 2. Pure logic + fixture tests | **Done** (`309f7ed`..`5eca2ed`) | 52 tests green, incl. 122 differential cases vs Python |
 | 3. State machine + recovery tests | **Done** (`e11af6a`..`HEAD`) | 104 tests green; all 11 scenario groups ported |
-| 4. Real adapters | Next | End-to-end dictation into TextEdit |
+| 4. Real adapters | **Built, gate pending** | End-to-end dictation into TextEdit — needs a human to speak |
 | 5. Product UI | Not started | Manual checklist, plan §11 |
 | 6. Polish + handover | Not started | — |
 
@@ -112,7 +112,33 @@ discarded. That is what stops a slow transcription typing into whatever the
 user did next. It is verified by mutation: disabling the guard fails exactly
 the two abandonment tests and nothing else.
 
-### Phase 4 starting notes
+### What Phase 4 landed
+
+WhisperKit 1.1.0 (pinned exactly), `AVAudioEngine` capture, CoreAudio device
+enumeration, the settings store, the pasteboard adapter, and the app wiring.
+
+**The sandbox question is answered.** WhisperKit downloads *and* loads under
+App Sandbox with only `network.client`, storing in the container — verified by
+running the signed bundle with `--warm-model` to completion, zero denials.
+
+**Model choice diverges from plan §4 on purpose.** Three tiers
+(fast/balanced/accurate) instead of the Python's eight keys; see the commit
+message on `ec86c0d` for why. `balanced` ships in the bundle, the other two
+download on demand. All eight legacy key names still decode onto the nearest
+tier, so existing configs keep working.
+
+Two support flags on the binary, useful when something misbehaves:
+
+```bash
+./build/OpenWhisperSwift.app/Contents/MacOS/OpenWhisperSwift --list-devices
+./build/OpenWhisperSwift.app/Contents/MacOS/OpenWhisperSwift --warm-model
+```
+
+**Watch the disk.** The full-precision `accurate` tier is ~3 GB, and a download
+that runs out of space leaves a partial model behind. `fetch-default-model.sh`
+refuses to start below 5 GB free for that reason.
+
+### Phase 4 starting notes (done — kept for reference)
 
 - Pin WhisperKit **v1.1.0** (see resolved gaps above) and add it to
   `Package.swift` as a package dependency. This is the first step needing
