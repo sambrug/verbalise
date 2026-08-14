@@ -7,7 +7,11 @@ struct SettingsRootView: View {
     @ObservedObject var model: SettingsModel
 
     var body: some View {
-        NavigationSplitView {
+        // Pinned open. Removing the sidebar toggle took away the only way to
+        // bring the sidebar back, while the divider could still be dragged
+        // shut -- so a stray drag lost the navigation permanently. A constant
+        // binding refuses the collapse rather than offering a way to undo it.
+        NavigationSplitView(columnVisibility: .constant(.all)) {
             List(SettingsPane.allCases, selection: paneSelection) { pane in
                 PaneLabel(
                     pane: pane,
@@ -26,9 +30,12 @@ struct SettingsRootView: View {
             // Applied outermost on purpose. Inside `.toolbar(removing:)` the
             // width is silently dropped and the column falls back to its
             // 140pt floor, which truncated "Speech Model" to "Speech Mo…".
-            // Fixed rather than a range: given min/ideal/max the split view
-            // takes its position from saved state and ignores the ideal.
-            .navigationSplitViewColumnWidth(220)
+            //
+            // A floor with room to grow: 200 fits every label, and the divider
+            // still drags wider for anyone who wants it. The range only takes
+            // its position from saved state once there is some, which is the
+            // right behaviour -- it remembers what you dragged it to.
+            .navigationSplitViewColumnWidth(min: 200, ideal: 200, max: 320)
         } detail: {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

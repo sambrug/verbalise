@@ -111,7 +111,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         // Reopens where it was left, which is what every other Mac window does.
         // Versioned: the split view stores its divider position against
         // this name, and a stale one overrode the sidebar width.
-        window.setFrameAutosaveName("SettingsWindow.v4")
+        window.setFrameAutosaveName("SettingsWindow.v5")
         window.contentView = NSHostingView(rootView: SettingsRootView(model: model))
 
         super.init()
