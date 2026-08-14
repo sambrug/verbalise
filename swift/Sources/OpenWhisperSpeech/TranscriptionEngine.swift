@@ -100,15 +100,21 @@ public actor TranscriptionEngine: Transcriber {
         if whisperKit != nil, loadedModel == model { return }
 
         let variant = model.whisperKitModelName
-        let started = Date()
         let wasCold = whisperKit == nil
         unload()
 
+        // Download and load are timed separately. Folding them together makes
+        // a nine-minute first run look like a nine-minute model load, which is
+        // exactly the wrong conclusion to draw when tuning startup.
+        var downloadSeconds: TimeInterval = 0
         let folder: URL
+
         if let existing = Self.existingFolder(for: variant) {
             folder = existing
             log("model: using existing \(variant) at \(existing.lastPathComponent)")
         } else {
+            let downloadStarted = Date()
+            defer { downloadSeconds = Date().timeIntervalSince(downloadStarted) }
             // Download explicitly rather than letting the config do it
             // implicitly, so there is a progress figure to show. The Python
             // app's silent "Loading…" on first use of a model is what this
@@ -126,6 +132,7 @@ public actor TranscriptionEngine: Transcriber {
         }
 
         onPhase(.loading)
+        let loadStarted = Date()
         let config = WhisperKitConfig(
             modelFolder: folder.path,
             verbose: false,
@@ -140,11 +147,18 @@ public actor TranscriptionEngine: Transcriber {
         // Performance parity with the Python (commit c778fd6), which logged
         // cold vs warm load separately. Peak GPU memory was MLX-specific and
         // has no WhisperKit equivalent, so it is simply not logged.
-        let elapsed = Date().timeIntervalSince(started)
-        log(String(
-            format: "model: %@ loaded %@ in %.2fs",
-            variant, wasCold ? "cold" : "warm", elapsed
-        ))
+        let loadSeconds = Date().timeIntervalSince(loadStarted)
+        if downloadSeconds > 0 {
+            log(String(
+                format: "model: %@ downloaded in %.0fs, loaded %@ in %.2fs",
+                variant, downloadSeconds, wasCold ? "cold" : "warm", loadSeconds
+            ))
+        } else {
+            log(String(
+                format: "model: %@ loaded %@ in %.2fs",
+                variant, wasCold ? "cold" : "warm", loadSeconds
+            ))
+        }
         onPhase(.ready)
     }
 
