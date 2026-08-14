@@ -15,11 +15,6 @@ struct SettingsRootView: View {
                 )
                 .tag(pane)
             }
-            // A range rather than a fixed width: 200 left "Speech Model"
-            // and the Permissions attention dot with nothing to spare, and a
-            // fixed column cannot grow even though the window resizes. 220 is
-            // roughly what System Settings uses.
-            .navigationSplitViewColumnWidth(min: 210, ideal: 220, max: 280)
             // No sidebar toggle. NavigationSplitView adds one to the toolbar
             // by default, and it sits at the sidebar's trailing edge -- so
             // clicking it collapses the sidebar and the button jumps across
@@ -28,11 +23,16 @@ struct SettingsRootView: View {
             // it either), and a control whose first act is to move away from
             // the pointer is worse than no control.
             .toolbar(removing: .sidebarToggle)
+            // Applied outermost on purpose. Inside `.toolbar(removing:)` the
+            // width is silently dropped and the column falls back to its
+            // 140pt floor, which truncated "Speech Model" to "Speech Mo…".
+            // Fixed rather than a range: given min/ideal/max the split view
+            // takes its position from saved state and ignores the ideal.
+            .navigationSplitViewColumnWidth(220)
         } detail: {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationSplitViewStyle(.balanced)
     }
 
     /// `List` wants an optional selection; the window always has a pane open, so
@@ -134,7 +134,7 @@ private struct GeneralPane: View {
                 // an arithmetic nobody could see the result of, under two
                 // rows that are plain counts and need no explaining.
                 if timeSaved != nil {
-                    Text("Based on typing at 40 words a minute and speaking at 150.")
+                    Text("Based on typing at 40 words per minute and speaking at 150.")
                         .settingsFootnote()
                 }
             }
@@ -407,7 +407,8 @@ private struct VocabularyPane: View {
             } header: {
                 Text("Corrections")
             } footer: {
-                Text("Replacements applied after transcribing.")
+                Text("Replacements applied after transcribing. Use for stubborn "
+                     + "terms that the transcription consistently gets wrong.")
                 .settingsFootnote()
             }
         }
@@ -500,8 +501,7 @@ private struct PermissionsPane: View {
                 )
                 PermissionRowView(
                     title: "Input Monitoring",
-                    detail: "Lets Open Whisper spot your trigger key. It watches "
-                        + "for that one key and nothing else.",
+                    detail: "Lets Open Whisper spot your trigger key.",
                     isGranted: Permissions.hasInputMonitoring,
                     pane: .inputMonitoring,
                     request: { done in

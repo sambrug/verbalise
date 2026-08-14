@@ -102,14 +102,16 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
             defer: false
         )
         window.isReleasedWhenClosed = false
-        window.setContentSize(NSSize(width: 720, height: 560))
+        window.setContentSize(NSSize(width: 760, height: 560))
         // Resizable with a floor. System Settings resizes too, and the panes
         // here are not all the same height -- Vocabulary's two editors need
         // more room than Trigger Key's single picker, and without this the
         // taller ones had their closing footer cut off at the window edge.
         window.contentMinSize = NSSize(width: 660, height: 460)
         // Reopens where it was left, which is what every other Mac window does.
-        window.setFrameAutosaveName("SettingsWindow")
+        // Versioned: the split view stores its divider position against
+        // this name, and a stale one overrode the sidebar width.
+        window.setFrameAutosaveName("SettingsWindow.v4")
         window.contentView = NSHostingView(rootView: SettingsRootView(model: model))
 
         super.init()
