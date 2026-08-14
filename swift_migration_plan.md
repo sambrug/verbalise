@@ -36,9 +36,9 @@ two must differ, the difference is listed in §10 and nowhere else.
 | Setting | Value | Why |
 |---|---|---|
 | Directory | `swift/` | Coexists with the Python app in one repo |
-| Product name | `OpenWhisper` | `OpenWhisper.app` can sit in /Applications next to the Python `Open Whisper.app` |
-| Display name | Open Whisper | |
-| Bundle ID | `com.sambruggen.openwhisper` | Distinct from the Python app's `com.sambruggen.open-whisper`, so TCC grants never collide |
+| Product name | `OpenWhisperSwift` | `OpenWhisperSwift.app` is unmistakable next to the Python `Open Whisper.app` in /Applications |
+| Display name | Open Whisper Swift | Distinct in permission panes, Finder, and the Quit item. Renaming at App Store time costs nothing: TCC grants follow the bundle ID, not the name |
+| Bundle ID | `com.sambruggen.openwhisper` | Distinct from the Python app's `com.sambruggen.open-whisper`, so TCC grants never collide. Name-agnostic on purpose: it is the permanent identity and survives the eventual rename |
 | Deployment target | macOS 14.0 | WhisperKit's floor (APP_STORE.md §3) |
 | Swift | 6 language mode, strict concurrency | Toolchain on this machine is Swift 6.3 / Xcode 26 |
 | UI frameworks | AppKit `NSStatusItem` + `NSMenu` for the menu bar; SwiftUI inside windows (pill, onboarding, editors) | Dynamic submenus, badges, and marquee status text are awkward in `MenuBarExtra`; the pill is already SwiftUI |
@@ -233,7 +233,10 @@ Python source, which is the spec.
 - Launch at Login via `SMAppService.mainApp` (works sandboxed).
 - View Logs opens an in-app scrolling log window tailing the file log (the
   Terminal + `osascript` route at `menubar.py:1629` is sandbox-illegal).
-- Menu bar icon from the bundled template SVGs/PNG (`menubar.py:334`).
+- Menu bar icon: deliberately different from the Python app's
+  (`menubar.py:334`) so the two are tellable apart at a glance when both
+  run; a plain SF Symbol (e.g. `waveform`) is fine. Swap to the shared
+  branding at App Store submission time.
 - Quit tears everything down cleanly (tap, engine, pill).
 
 ### Overlay pill
@@ -336,9 +339,9 @@ at runtime; fail loudly at build time.
 ```bash
 brew install xcodegen                                  # once
 cd swift && xcodegen                                   # regenerate project
-xcodebuild -project OpenWhisper.xcodeproj -scheme OpenWhisper build
-xcodebuild -project OpenWhisper.xcodeproj -scheme OpenWhisper test
-open build/.../OpenWhisper.app                         # manual runs
+xcodebuild -project OpenWhisperSwift.xcodeproj -scheme OpenWhisperSwift build
+xcodebuild -project OpenWhisperSwift.xcodeproj -scheme OpenWhisperSwift test
+open build/.../OpenWhisperSwift.app                    # manual runs
 ```
 
 Also add a `swift-app` target to the root Makefile that wraps
