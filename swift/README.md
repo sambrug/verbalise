@@ -149,6 +149,18 @@ Beyond plan §10's accepted list:
 - **Overlay is on or off.** The opaque `solid` capsule was a fallback for macOS
   without Liquid Glass; with a macOS 14 floor it is a worse-looking duplicate.
   Old configs naming `solid` or `translucent` load as on.
+- **The pill is no longer a verbatim port.** Plan §1 put its look off-limits
+  for redesign, and that held through the initial port — but the solid variant
+  has since been removed, the glass moved from `.regular` to `.clear`, and the
+  level feed rewritten to sample at a fixed rate. Those were deliberate
+  decisions taken after seeing it run, not drift, but the "unchanged
+  rendering" guarantee in §1 no longer holds. `overlay.swift` at the repo root
+  is unmodified and still drives the Python app, so the two now render
+  differently.
+- **Levels are sampled, not pushed.** The Python fed the pill one level per
+  audio buffer; here a `LevelMeter` decouples the audio thread from the
+  animation, which samples at a fixed 20Hz. Buffer arrival is neither regular
+  nor a rate the animation should inherit.
 - **Config is JSON**, not YAML (plan §10 permits this). Same keys, same
   defaults.
 - **Phonetic corrections apply in sorted-key order.** Python uses dict insertion

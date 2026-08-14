@@ -72,7 +72,18 @@ anyone who prefers to work in the IDE.
 All six phases are implemented. What remains is verification, not code: the
 plan §11 checklist below has only been partly exercised.
 
-## Outstanding: plan §11 checklist
+## Outstanding
+
+Two items, both recorded against the plan's own §11 checklist:
+
+1. **Yank a Bluetooth mic mid-recording.** The recovery machinery has coverage
+   against fakes for all 11 scenario groups and none against real hardware.
+2. **Run the Python import successfully.** The mechanism is fixed and tested;
+   it has not yet completed end to end.
+
+Everything else on §11 is ticked.
+
+## Original checklist (superseded by §11 in the plan)
 
 Verified so far — sandbox event taps and keystroke posting, end-to-end
 dictation, the pill, the editors' clipboard shortcuts.

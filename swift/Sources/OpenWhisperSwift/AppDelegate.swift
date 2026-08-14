@@ -50,6 +50,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task.detached(priority: .utility) { [rate = settings.sampleRate] in
             AudioPrewarm.run(sampleRate: Double(rate))
         }
+
+        // Same reasoning for the speech model: get it ready before the first
+        // keypress instead of during it. A model already on disk loads in a few
+        // seconds; one that needs fetching shows download progress in the menu
+        // and gates the trigger key until it lands.
+        preloadModel()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -170,6 +176,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return session
     }
 
+    /// Loads the model in the background at launch, and after a model change.
+    ///
+    /// A failure here is not fatal and deliberately does not alert: the next
+    /// dictation retries, and a transient network problem at launch should not
+    /// greet the user with a dialog about something they were not doing.
+    private func preloadModel() {
+        guard let engine else { return }
+        Task.detached(priority: .utility) {
+            do {
+                try await engine.ensureLoaded()
+            } catch {
+                log("model: preload failed — \(error.localizedDescription)")
+            }
+        }
+    }
+
     private func startKeyTap() {
         if !Permissions.hasInputMonitoring {
             Permissions.requestInputMonitoring()
@@ -192,16 +214,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func triggerChanged(held: Bool) {
-        guard let controller else { return }
-        if settings.soundEnabled {
-            held ? Sounds.playStart() : Sounds.playStop()
-        }
-        Task {
-            if held {
-                await controller.startRecording()
-            } else {
-                await controller.stopAndTranscribe()
+        guard let controller, let engine else { return }
+
+        if held {
+            // Refuse only while a download is in flight. Recording into a
+            // multi-minute fetch produces a dictation that looks hung, and the
+            // user has no way to tell it apart from a crash — better to say so
+            // and let them try again in a moment.
+            if case .downloading = enginePhase {
+                log("dictation: refused, model still downloading")
+                menu?.show(alert: "Downloading the speech model — dictation will work once it finishes.")
+                return
             }
+            if settings.soundEnabled { Sounds.playStart() }
+
+            Task {
+                // Load in parallel with the recording rather than after it.
+                // A model already on disk takes a few seconds, which is time
+                // the user spends speaking anyway — so by the time they let go
+                // it is usually ready and the wait disappears entirely.
+                if await !engine.isLoaded {
+                    menu?.show(status: "Recording… (waking speech model)")
+                    Task.detached { try? await engine.ensureLoaded() }
+                }
+                await controller.startRecording()
+            }
+        } else {
+            if settings.soundEnabled { Sounds.playStop() }
+            Task { await controller.stopAndTranscribe() }
         }
     }
 
@@ -247,7 +287,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private var enginePhase: TranscriptionEngine.Phase = .idle
+
     private func show(phase: TranscriptionEngine.Phase) {
+        enginePhase = phase
         switch phase {
         case .downloading(let fraction):
             menu?.show(status: fraction.map { "Downloading model \(Int($0 * 100))%" }

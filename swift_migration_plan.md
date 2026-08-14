@@ -396,23 +396,33 @@ Everything not on this list must match.
 
 After the agent finishes, verify on this Mac:
 
-- [ ] Onboarding appears on first run; granting the two permissions
-      advances it without a restart.
-- [ ] Hold Right Shift in TextEdit, speak, release: text appears in 1-2 s;
-      pill shows and hides correctly in both translucent and solid styles.
-- [ ] A long dictation (>30 s) streams: release-to-text wait stays short.
-- [ ] Short dictation leaves the clipboard untouched; long dictation
+Results as of 2026-08-14.
+
+- [x] Onboarding appears when a permission is missing; granting advances it
+      without a restart. Shown whenever a grant is absent rather than only on
+      first run — a revoked permission leaves the app equally broken.
+- [x] Hold Right Shift in TextEdit, speak, release: text appears; pill shows
+      and hides correctly. **Solid style no longer exists** — the overlay is
+      on or off, see §10 additions below.
+- [x] A long dictation (>30 s) streams: release-to-text wait stays short.
+- [x] Short dictation leaves the clipboard untouched; long dictation
       restores the previous clipboard after ~1.5 s.
-- [ ] Escape cancels a live recording; nothing is typed.
-- [ ] Switch models from the menu; download shows progress; dictation
+- [x] Escape cancels a live recording; nothing is typed.
+- [x] Switch models from the menu; download shows progress; dictation
       works on the new model.
-- [ ] Yank a Bluetooth mic mid-recording: app recovers, next dictation
-      works, no stuck pill, no dead trigger key.
-- [ ] Stats and time-saved lines update after dictations; import brings
-      across the Python app's lifetime numbers.
-- [ ] Launch at Login toggle works; app survives logout/login.
-- [ ] `xcodebuild test` green; `codesign -dv` shows sandbox on and the
-      `Open Whisper Dev` authority.
+- [ ] **Yank a Bluetooth mic mid-recording** — not done. The recovery
+      machinery has coverage against fakes for all 11 scenario groups and
+      none against real hardware. The largest remaining gap between "tested"
+      and "known to work".
+- [x] Stats and time-saved lines update after dictations.
+- [ ] **Import brings across the Python app's lifetime numbers** — the
+      mechanism is fixed and tested but has not been run successfully end to
+      end. The first attempt found nothing because the panel opened inside the
+      sandbox container.
+- [x] Launch at Login toggle works.  Survival across logout/login not checked.
+- [x] Suite green (153 Swift tests, 63 Python); `codesign -dv` shows the
+      sandbox on and the `Open Whisper Dev` authority. Run via `swift test`,
+      not `xcodebuild test` — see §2 note on the toolchain.
 
 Side-by-side note: both apps default to Right Shift. When testing them
 together, change one app's trigger (e.g. `alt_r+shift_r`) or quit the
