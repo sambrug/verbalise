@@ -16,6 +16,14 @@ struct SettingsRootView: View {
                 .tag(pane)
             }
             .navigationSplitViewColumnWidth(200)
+            // No sidebar toggle. NavigationSplitView adds one to the toolbar
+            // by default, and it sits at the sidebar's trailing edge -- so
+            // clicking it collapses the sidebar and the button jumps across
+            // the window to follow it. There is nothing to gain from hiding
+            // the sidebar in a settings window (System Settings does not offer
+            // it either), and a control whose first act is to move away from
+            // the pointer is worse than no control.
+            .toolbar(removing: .sidebarToggle)
         } detail: {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -78,6 +86,10 @@ private struct PaneLabel: View {
 private struct GeneralPane: View {
     @ObservedObject var model: SettingsModel
 
+    /// Nil until there is a meaningful amount of it, which is what both the
+    /// row and its footnote key off.
+    private var timeSaved: String? { StatsFormatter.timeSaved(model.stats) }
+
     var body: some View {
         Form {
             Section {
@@ -108,15 +120,20 @@ private struct GeneralPane: View {
                                value: StatsFormatter.grouped(model.stats.totalWords))
                 // Only once there is enough to be worth saying. "0 minutes" on
                 // a fresh install is a worse greeting than no row at all.
-                if let saved = StatsFormatter.timeSaved(model.stats) {
+                if let saved = timeSaved {
                     LabeledContent("Time saved typing", value: saved)
                 }
             } header: {
                 Text("Usage")
             } footer: {
-                Text("Based on typing at 40 words a minute and speaking at "
-                     + "150. It's a rough guide, not a stopwatch.")
-                .settingsFootnote()
+                // Tied to the row it explains. Shown on its own it described
+                // an arithmetic nobody could see the result of, under two
+                // rows that are plain counts and need no explaining.
+                if timeSaved != nil {
+                    Text("Based on typing at 40 words a minute and speaking at "
+                         + "150. It's a rough guide, not a stopwatch.")
+                    .settingsFootnote()
+                }
             }
 
             Section {
