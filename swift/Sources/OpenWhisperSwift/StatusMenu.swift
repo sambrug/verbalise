@@ -12,7 +12,6 @@ protocol StatusMenuDelegate: AnyObject {
 
     func clearRecentTranscripts()
     func showSettings()
-    func restart()
 }
 
 @MainActor
@@ -68,7 +67,12 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         stateItem.isEnabled = false
         menu.addItem(stateItem)
 
-        alertItem.isEnabled = false
+        // Clickable, because every message it carries is answered somewhere in
+        // Settings -- a bad trigger key, a model still downloading, an audio
+        // system that needs the app restarted. Making the warning the way in
+        // costs nothing and saves reading it, dismissing it, and hunting.
+        alertItem.target = self
+        alertItem.action = #selector(showSettings)
         alertItem.isHidden = true
         menu.addItem(alertItem)
 
@@ -92,15 +96,14 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         // Everything configurable lives in the Settings window. Only what you
-        // act on in the moment — state, the last transcript, Restart, Quit —
-        // stays here. A submenu could not show a model downloading, could not
-        // hold the permission rows, and made every toggle a four-level hover.
+        // act on in the moment — state, the last transcript, Quit — stays
+        // here. A submenu could not show a model downloading, could not hold
+        // the permission rows, and made every toggle a four-level hover.
         add(to: menu, title: "Settings…", action: #selector(showSettings), key: ",")
 
         menu.addItem(.separator())
 
         add(to: menu, title: "About \(Self.appName)", action: #selector(showAbout))
-        add(to: menu, title: "Restart", action: #selector(restart))
         add(to: menu, title: "Quit \(Self.appName)", action: #selector(quit), key: "q")
 
         statusItem.menu = menu
@@ -173,7 +176,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     func show(alert message: String) {
         self.alert = message
         alertItem.title = Self.truncate(message, limit: 44)
-        alertItem.toolTip = message
+        alertItem.toolTip = "\(message)\n\nClick to open Settings."
+
         alertItem.image = Self.warningSymbol
         alertItem.isHidden = false
     }
@@ -260,10 +264,6 @@ final class StatusMenu: NSObject, NSMenuDelegate {
                 ]
             )
         ])
-    }
-
-    @objc private func restart() {
-        delegate?.restart()
     }
 
     @objc private func quit() {

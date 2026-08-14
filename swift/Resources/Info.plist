@@ -11,9 +11,9 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Open Whisper Swift</string>
+	<string>Open Whisper</string>
 	<key>CFBundleDisplayName</key>
-	<string>Open Whisper Swift</string>
+	<string>Open Whisper</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -50,6 +50,6 @@
 	<string>Open Whisper records audio from your microphone while you hold the trigger key, and transcribes it on this Mac.</string>
 
 	<key>NSHumanReadableCopyright</key>
-	<string>Open Whisper</string>
+	<string>© 2026 Sam Bruggen</string>
 </dict>
 </plist>

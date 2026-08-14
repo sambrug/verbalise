@@ -86,13 +86,13 @@ private struct GeneralPane: View {
                     set: { model.setLaunchesAtLogin($0) }
                 )) {
                     Text("Open at login")
-                    Text("Starts automatically and waits in the menu bar.")
+                    Text("No window and no Dock icon — just the menu bar.")
                 }
 
                 Toggle(isOn: model.binding(\.overlayStyle, as: { $0 == .on }, to: { $0 ? .on : .off })) {
                     Text("Show recording overlay")
-                    Text("A small indicator appears while you speak, showing "
-                         + "the microphone level.")
+                    Text("Shows the microphone level while you speak, so you "
+                         + "can see it's listening.")
                 }
 
                 Toggle(isOn: model.binding(\.soundEnabled)) {
@@ -114,19 +114,24 @@ private struct GeneralPane: View {
             } header: {
                 Text("Usage")
             } footer: {
-                Text("Time saved compares typing at 40 words a minute with "
-                     + "speaking at 150. It is indicative, not a measurement.")
+                Text("Based on typing at 40 words a minute and speaking at "
+                     + "150. It's a rough guide, not a stopwatch.")
                 .settingsFootnote()
             }
 
             Section {
                 Button("Open Configuration File") { model.openConfigFile() }
                 Button("Show Log") { model.showLog() }
+                // Last, because it is the only one that interrupts anything.
+                // Its reason for existing is the audio system wedging, which
+                // the menu bar warns about and links here.
+                Button("Restart Open Whisper") { model.restart() }
             } header: {
                 Text("Advanced")
             } footer: {
-                Text("Every setting here is also in the configuration file, "
-                     + "which you can edit by hand.")
+                Text("Every setting is kept in the configuration file, if "
+                     + "you'd rather edit it by hand. Restarting is worth a "
+                     + "try if dictation stops responding.")
                 .settingsFootnote()
             }
         }
@@ -151,9 +156,9 @@ private struct TriggerKeyPane: View {
                     }
                 }
             } footer: {
-                Text("Hold the key while you speak, then release. The text is "
-                     + "inserted into whatever app you are using.\n"
-                     + "Press Escape while recording to discard it.")
+                Text("Hold it while you speak, then let go — your words "
+                     + "appear wherever you were typing.\n"
+                     + "Press Escape mid-recording to throw it away.")
                 .settingsFootnote()
             }
         }
@@ -183,7 +188,8 @@ private struct SpeechModelPane: View {
                 Text("Transcription runs on this Mac. Nothing you say is sent to a server.")
                     .settingsFootnote()
             } footer: {
-                Text("Models are stored in the app and removed when you delete it.")
+                Text("Models are stored inside the app, so deleting it "
+                     + "removes them too.")
                     .settingsFootnote()
             }
         }
@@ -270,15 +276,15 @@ private struct AudioPane: View {
                     }
                 }
             } footer: {
-                Text(missingDeviceNote ?? "System Default follows whatever you choose in "
-                     + "Sound settings, including a headset as you connect it.")
+                Text(missingDeviceNote ?? "System Default follows your Sound settings, "
+                     + "so a headset works the moment you plug it in.")
                 .settingsFootnote()
             }
 
             Section {
                 Toggle(isOn: model.binding(\.advanced.trimSilenceEnabled)) {
                     Text("Trim silence")
-                    Text("Removes quiet lead-in and trailing pauses before transcribing.")
+                    Text("Cuts the quiet at either end before transcribing.")
                 }
             }
         }
@@ -292,7 +298,8 @@ private struct AudioPane: View {
         guard let configured = model.settings.inputDevice,
               !model.inputDevices.contains(configured)
         else { return nil }
-        return "“\(configured)” is not connected. Recording uses the system default until it is."
+        return "“\(configured)” isn't connected. Recording falls back to the "
+            + "system default until it is."
     }
 }
 
@@ -306,14 +313,14 @@ private struct TextOutputPane: View {
             Section {
                 Toggle(isOn: model.binding(\.advanced.streamingTranscribeEnabled)) {
                     Text("Transcribe while you speak")
-                    Text("Long dictations are transcribed in the background, "
-                         + "so there is less to wait for when you let go.")
+                    Text("Gets a head start on long dictations, so there's "
+                         + "less to wait for when you let go.")
                 }
 
                 Toggle(isOn: model.binding(\.advanced.fastTypingEnabled)) {
                     Text("Type short results directly")
-                    Text("Avoids touching the clipboard for short dictations. "
-                         + "Longer ones are pasted and your clipboard is put back.")
+                    Text("Short results are typed straight in. Longer ones are "
+                         + "pasted, and your clipboard is put back afterwards.")
                 }
             }
         }
@@ -354,8 +361,7 @@ private struct VocabularyPane: View {
             } header: {
                 Text("Corrections")
             } footer: {
-                Text("Words that are consistently misheard, replaced after "
-                     + "transcribing.")
+                Text("Fixes for the words that come out wrong every time.")
                 .settingsFootnote()
             }
         }
@@ -448,8 +454,8 @@ private struct PermissionsPane: View {
                 )
                 PermissionRowView(
                     title: "Input Monitoring",
-                    detail: "Notices the trigger key being held. Open Whisper "
-                        + "watches for that key only and never blocks it.",
+                    detail: "Lets Open Whisper spot your trigger key. It watches "
+                        + "for that one key and nothing else.",
                     isGranted: Permissions.hasInputMonitoring,
                     pane: .inputMonitoring,
                     request: { done in
@@ -460,7 +466,7 @@ private struct PermissionsPane: View {
                 )
                 PermissionRowView(
                     title: "Accessibility",
-                    detail: "Types the transcribed text into the app you are using.",
+                    detail: "Types your words into whatever app you're using.",
                     isGranted: Permissions.hasPostEvent,
                     pane: .accessibility,
                     request: { done in
@@ -475,17 +481,30 @@ private struct PermissionsPane: View {
                 // each grant. Deliberately not `.id(revision)` -- that rebuilds
                 // the rows from scratch every second and resets their state.
                 Text(model.permissionsNeedAttention
-                     ? "Open Whisper needs these to work. macOS grants each one "
-                       + "separately, and none can be granted by the app itself."
-                     : "Open Whisper has everything it needs.")
+                     ? "macOS asks for each of these separately, and only you "
+                       + "can grant them — Open Whisper can't do it for itself."
+                     : readyMessage)
                 .settingsFootnote()
             } footer: {
-                Text("This list updates as you grant them, so you can leave it "
-                     + "open beside System Settings.")
+                Text("This updates as you go, so you can leave it open next "
+                     + "to System Settings.")
                 .settingsFootnote()
             }
         }
         .paneStyle()
+    }
+
+    /// The end of setup is the only moment the app can be sure someone is
+    /// looking and has nothing left to do, so it is where the one instruction
+    /// that matters belongs.
+    ///
+    /// It names the user's own trigger key rather than a default they may have
+    /// changed. "Hold your trigger key" is useless to someone who has never
+    /// heard the phrase and does not yet know which key it means.
+    private var readyMessage: String {
+        let key = model.settings.triggerCombo?.displayName ?? "your trigger key"
+        return "You're all set. Hold \(key) anywhere and start talking — "
+            + "your words appear wherever you were typing."
     }
 }
 
