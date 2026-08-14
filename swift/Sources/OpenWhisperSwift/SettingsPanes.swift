@@ -86,16 +86,18 @@ private struct GeneralPane: View {
                     set: { model.setLaunchesAtLogin($0) }
                 )) {
                     Text("Open at login")
-                    Text("Open Whisper runs in the menu bar with no window.")
+                    Text("Starts automatically and waits in the menu bar.")
                 }
 
                 Toggle(isOn: model.binding(\.overlayStyle, as: { $0 == .on }, to: { $0 ? .on : .off })) {
                     Text("Show recording overlay")
-                    Text("A floating pill shows the microphone level while you speak.")
+                    Text("A small indicator appears while you speak, showing "
+                         + "the microphone level.")
                 }
 
                 Toggle(isOn: model.binding(\.soundEnabled)) {
-                    Text("Play a sound when recording starts and stops")
+                    Text("Play sounds")
+                    Text("A short tone when recording starts and stops.")
                 }
             }
 
@@ -121,7 +123,11 @@ private struct GeneralPane: View {
                 Button("Open Configuration File") { model.openConfigFile() }
                 Button("Show Log") { model.showLog() }
             } header: {
-                Text("Diagnostics")
+                Text("Advanced")
+            } footer: {
+                Text("Every setting here is also in the configuration file, "
+                     + "which you can edit by hand.")
+                .settingsFootnote()
             }
         }
         .paneStyle()
@@ -136,7 +142,7 @@ private struct TriggerKeyPane: View {
     var body: some View {
         Form {
             Section {
-                Picker("Hold to dictate:", selection: Binding(
+                Picker("Hold to dictate", selection: Binding(
                     get: { model.settings.triggerKey },
                     set: { new in model.change { $0.triggerKey = new } }
                 )) {
@@ -256,7 +262,7 @@ private struct AudioPane: View {
     var body: some View {
         Form {
             Section {
-                Picker("Microphone:", selection: deviceSelection) {
+                Picker("Microphone", selection: deviceSelection) {
                     Text("System Default").tag("")
                     Divider()
                     ForEach(model.inputDevices, id: \.self) { name in
@@ -325,21 +331,22 @@ private struct VocabularyPane: View {
             Section {
                 DebouncedEditor(
                     text: VocabularyText.format(model.settings.vocabulary),
+                    placeholder: "Anthropic\nKubernetes\nFNOL",
                     model: model
                 ) { text in
                     model.change { $0.vocabulary = VocabularyText.parse(text) }
                 }
             } header: {
-                Text("Vocabulary")
+                Text("Terms")
             } footer: {
-                Text("Names, acronyms and jargon to favour when transcribing. "
-                     + "One per line.")
-                .settingsFootnote()
+                Text("Names, acronyms and jargon to favour when transcribing.")
+                    .settingsFootnote()
             }
 
             Section {
                 DebouncedEditor(
                     text: PhoneticText.format(model.settings.phoneticCorrections),
+                    placeholder: "ethanol: FNOL\nsequel: SQL",
                     model: model
                 ) { text in
                     model.change { $0.phoneticCorrections = PhoneticText.parse(text) }
@@ -348,7 +355,7 @@ private struct VocabularyPane: View {
                 Text("Corrections")
             } footer: {
                 Text("Words that are consistently misheard, replaced after "
-                     + "transcribing. One per line, as  misheard: correct")
+                     + "transcribing.")
                 .settingsFootnote()
             }
         }
@@ -364,6 +371,9 @@ private struct VocabularyPane: View {
 /// window flushes whatever is still pending.
 private struct DebouncedEditor: View {
     let text: String
+    /// A worked example rather than a restatement of the footer. The format is
+    /// easier to copy than to describe, and an empty grey box teaches nothing.
+    let placeholder: String
     @ObservedObject var model: SettingsModel
     let commit: (String) -> Void
 
@@ -372,11 +382,32 @@ private struct DebouncedEditor: View {
 
     var body: some View {
         TextEditor(text: $draft)
-            .font(.body.monospaced())
+            // The system font, not monospaced: this is a list of words, not
+            // code, and a monospaced block in a settings window reads as a
+            // debug surface.
+            .font(.body)
             .frame(minHeight: 110)
             .scrollContentBackground(.hidden)
             .padding(6)
-            .background(.background.secondary, in: RoundedRectangle(cornerRadius: 6))
+            // Styled as the editable field it is. A plain filled rectangle
+            // looked like a disabled area rather than somewhere to type.
+            .background(Color(nsColor: .textBackgroundColor),
+                        in: RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(Color(nsColor: .separatorColor))
+            )
+            .overlay(alignment: .topLeading) {
+                if draft.isEmpty {
+                    Text(placeholder)
+                        .font(.body)
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 12)
+                        // Clicks belong to the editor underneath.
+                        .allowsHitTesting(false)
+                }
+            }
             .onAppear {
                 draft = text
                 loaded = true
@@ -489,7 +520,7 @@ private struct PermissionRowView: View {
             Spacer(minLength: 8)
 
             if !isGranted {
-                Button(hasPrompted ? "Open Settings…" : "Grant") {
+                Button(hasPrompted ? "Open System Settings" : "Grant") {
                     if hasPrompted {
                         if let url = Permissions.settingsURL(for: pane) {
                             NSWorkspace.shared.open(url)
@@ -501,8 +532,6 @@ private struct PermissionRowView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-            } else {
-                StatusBadge("Granted")
             }
         }
         .padding(.vertical, 3)
