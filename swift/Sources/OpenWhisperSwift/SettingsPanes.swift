@@ -195,6 +195,22 @@ private struct DictationPane: View {
                     }
                 }
 
+                LabeledContent("Input level") {
+                    if model.inputPreviewFailed {
+                        // A flat meter and an unavailable microphone look
+                        // identical, and only one of them is the user's
+                        // problem to solve.
+                        Text("Microphone unavailable")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        InputLevelMeter(
+                            meter: model.inputPreviewMeter,
+                            isRunning: model.isPreviewingInput
+                        )
+                    }
+                }
+
                 Toggle(isOn: model.binding(\.advanced.trimSilenceEnabled)) {
                     Text("Trim silence")
                     Text("Cuts the quiet at either end before transcribing.")
@@ -224,6 +240,11 @@ private struct DictationPane: View {
             }
         }
         .paneStyle()
+        // The microphone is open only while this pane is on screen. macOS
+        // shows its recording indicator throughout, which is honest and is
+        // what the Sound pane does too.
+        .onAppear { model.startInputPreview() }
+        .onDisappear { model.stopInputPreview() }
     }
 
     /// Combinations are offered alongside single keys, and whatever is
@@ -589,6 +610,67 @@ private struct PermissionRowView: View {
         }
         .padding(.vertical, 3)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// The input level, drawn the way System Settings draws it.
+///
+/// Segments rather than a continuous bar: a `ProgressView` reads as "how far
+/// through something am I", which is the wrong question. A row of discrete
+/// ticks reads as a meter, which is the convention every audio app on the
+/// platform already shares with the Sound pane.
+private struct InputLevelMeter: View {
+    let meter: LevelMeter
+    let isRunning: Bool
+
+    /// Smoothed for the eye, not for accuracy. Raw peak readings arrive at an
+    /// uneven rate and jitter hard enough to look broken.
+    @State private var level: Double = 0
+
+    private static let segmentCount = 16
+    /// Matches the pill's own scaling (`value * 8`), so the two surfaces never
+    /// disagree about how loud the same voice is.
+    private static let gain: Double = 8
+    private static let sampleInterval = Duration.milliseconds(50)
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(0..<Self.segmentCount, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(fill(for: index))
+                    .frame(width: 3, height: 11)
+            }
+        }
+        .animation(.linear(duration: 0.05), value: level)
+        .accessibilityElement()
+        .accessibilityLabel("Input level")
+        .accessibilityValue("\(Int(level * 100)) percent")
+        .task(id: isRunning) {
+            guard isRunning else {
+                level = 0
+                return
+            }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.sampleInterval)
+                if Task.isCancelled { return }
+                let reading = min(Double(meter.read()) * Self.gain, 1)
+                // Fast attack, slow release: a meter that fell as quickly as it
+                // rose would flicker on every syllable gap. Real ones lag on
+                // the way down for exactly this reason.
+                level = reading > level ? reading : level * 0.82 + reading * 0.18
+            }
+        }
+    }
+
+    private func fill(for index: Int) -> AnyShapeStyle {
+        let threshold = Double(index) / Double(Self.segmentCount - 1)
+        guard isRunning, level >= threshold, level > 0.01 else {
+            return AnyShapeStyle(.quaternary)
+        }
+        // The top two segments warn rather than decorate: they are the ones
+        // that mean clipping, and a meter that never changes colour never
+        // tells you that.
+        return AnyShapeStyle(index >= Self.segmentCount - 2 ? Color.orange : Color.accentColor)
     }
 }
 

@@ -142,6 +142,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private let meter = LevelMeter()
 
+    /// Drives the Settings input level meter. Never runs during a dictation.
+    let inputPreview = InputPreview()
+
     private func buildStack() {
         pill = OverlayPill(style: settings.overlayStyle, meter: meter)
 
@@ -242,6 +245,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let controller, let engine else { return }
 
         if held {
+            // Whatever the Settings window is doing with the microphone, the
+            // dictation gets it.
+            inputPreview.stop()
+
             // Refuse only while a download is in flight. Recording into a
             // multi-minute fetch produces a dictation that looks hung, and the
             // user has no way to tell it apart from a crash — better to say so
@@ -272,9 +279,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Events
 
+    private var dictationState: DictationState = .idle
+
     private func handle(_ event: DictationEvent) {
         switch event {
         case .state(let state):
+            dictationState = state
             menu?.show(state: state)
 
         case .pill(let command):
@@ -390,6 +400,20 @@ extension AppDelegate: SettingsDelegate {
 
     func showLog() {
         LogWindow.show()
+    }
+
+    func setInputPreview(active: Bool) {
+        guard active else {
+            inputPreview.stop()
+            return
+        }
+        // Two engines on one microphone is needless risk against the one path
+        // that must not break. The meter can wait; a dictation cannot.
+        guard dictationState == .idle else {
+            log("mic preview: not starting, a dictation is in progress")
+            return
+        }
+        inputPreview.start(sampleRate: settings.sampleRate, deviceName: settings.inputDevice)
     }
 
     func reinstallKeyTap() {

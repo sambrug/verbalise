@@ -28,6 +28,11 @@ protocol SettingsDelegate: AnyObject {
 
     /// Input Monitoring has just been granted; the key tap needs rebuilding.
     func reinstallKeyTap()
+
+    /// Opens the microphone to drive the input level meter, and closes it
+    /// again. Refused while a dictation is running.
+    var inputPreview: InputPreview { get }
+    func setInputPreview(active: Bool)
 }
 
 /// The Settings window, replacing the status menu's `Settings ▸` submenu.
@@ -130,6 +135,8 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         permissionTimer?.invalidate()
         permissionTimer = nil
+        // The microphone must not stay open behind a closed window.
+        model.stopInputPreview()
         // Anything still sitting in a debounce is written now rather than lost.
         model.flushPendingEdits()
     }
@@ -275,8 +282,16 @@ final class SettingsModel: ObservableObject {
         guard let delegate else { return }
         var updated = delegate.currentSettings
         mutate(&updated)
+        let previousDevice = delegate.currentSettings.inputDevice
         delegate.apply(settings: updated)
         refresh()
+
+        // The meter has to follow the selection, or picking a microphone shows
+        // you the level of the one you just stopped using.
+        if isPreviewingInput, delegate.currentSettings.inputDevice != previousDevice {
+            delegate.setInputPreview(active: false)
+            delegate.setInputPreview(active: true)
+        }
     }
 
     func download(_ model: TranscriptionModel) {
@@ -308,6 +323,43 @@ final class SettingsModel: ObservableObject {
     func setLaunchesAtLogin(_ enabled: Bool) {
         LoginItem.set(enabled)
         launchesAtLogin = LoginItem.isEnabled
+    }
+
+    // MARK: - Input level
+
+    var inputPreviewMeter: LevelMeter { delegate?.inputPreview.meter ?? LevelMeter() }
+
+    @Published private(set) var isPreviewingInput = false
+    @Published private(set) var inputPreviewFailed = false
+
+    private var previewWatcher: Task<Void, Never>?
+
+    func startInputPreview() {
+        delegate?.setInputPreview(active: true)
+        inputPreviewFailed = false
+
+        // Opening happens off the main thread and can take a moment, so the
+        // first answer is usually "not yet". Watch until it settles rather than
+        // asking once and leaving a dead meter on screen if CoreAudio was slow.
+        previewWatcher?.cancel()
+        previewWatcher = Task { [weak self] in
+            for _ in 0..<15 {
+                guard let self, let delegate = self.delegate else { return }
+                self.isPreviewingInput = delegate.inputPreview.isRunning
+                self.inputPreviewFailed = delegate.inputPreview.didFail
+                if self.isPreviewingInput || self.inputPreviewFailed { return }
+                try? await Task.sleep(for: .milliseconds(200))
+                if Task.isCancelled { return }
+            }
+        }
+    }
+
+    func stopInputPreview() {
+        previewWatcher?.cancel()
+        previewWatcher = nil
+        delegate?.setInputPreview(active: false)
+        isPreviewingInput = false
+        inputPreviewFailed = false
     }
 
     func flushPendingEdits() {
