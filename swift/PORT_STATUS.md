@@ -50,11 +50,32 @@ the one that is known to work here.
 | Phase | State | Gate |
 |---|---|---|
 | 1. Scaffold + sandbox proof | **Done** (`f258e48`) | Builds, signs sandboxed, runs, tap installs. TCC-gated behaviours still need a human — see below. |
-| 2. Pure logic + fixture tests | In progress | `swift test` green |
-| 3. State machine + recovery tests | Not started | `swift test` green |
+| 2. Pure logic + fixture tests | **Done** (`309f7ed`..`5eca2ed`) | 52 tests green, incl. 122 differential cases vs Python |
+| 3. State machine + recovery tests | Next | `swift test` green |
 | 4. Real adapters | Not started | End-to-end dictation into TextEdit |
 | 5. Product UI | Not started | Manual checklist, plan §11 |
 | 6. Polish + handover | Not started | — |
+
+### What Phase 2 landed
+
+`TextPipeline`, `Silence`, `Stats`, `Settings` in `Sources/OpenWhisperCore/`.
+The text pipeline and stats are verified *differentially* against the Python:
+`Scripts/generate-fixtures.py` runs the real `daemon.py` functions over a
+corpus and records what they produce into
+`Tests/OpenWhisperCoreTests/Fixtures/text-pipeline.json`; the Swift tests
+assert equality. Regenerate after any change to the Python pipeline:
+
+```bash
+.venv/bin/python3 swift/Scripts/generate-fixtures.py
+```
+
+Two divergences worth knowing, both deliberate and commented in the source:
+
+- **Phonetic corrections apply in sorted-key order**, not config-file order.
+  Python uses dict insertion order, which a Swift `Dictionary` cannot preserve
+  through decoding. Only observable when two rules overlap.
+- **Config is JSON, not YAML** (plan §10 permits this). Keys and defaults are
+  unchanged, so a Python config maps across one-to-one.
 
 ## Outstanding: needs Sam
 
