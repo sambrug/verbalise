@@ -95,6 +95,36 @@ swift-app:
 swift-run: swift-app
 	open swift/build/OpenWhisperSwift.app
 
+swift-install: swift-app
+	@# Installs the Swift app to /Applications so it can be the daily driver.
+	@#
+	@# Two things make this more than a copy. TCC keys Input Monitoring and
+	@# Accessibility to the bundle *path*, so an app moved from swift/build/
+	@# to /Applications is a new app as far as macOS is concerned and both
+	@# grants have to be given again. And the Python app installs under the
+	@# same name, so this refuses rather than quietly overwriting it.
+	@if [ -d "/Applications/Open Whisper.app" ]; then \
+		id=$$(defaults read "/Applications/Open Whisper.app/Contents/Info.plist" CFBundleIdentifier 2>/dev/null); \
+		if [ "$$id" != "com.sambruggen.openwhisper" ]; then \
+			echo "Error: /Applications/Open Whisper.app is the Python app ($$id)." >&2; \
+			echo "       Quit it, turn off its login item, and move it to the Trash" >&2; \
+			echo "       yourself before installing this one over the name." >&2; \
+			exit 1; \
+		fi; \
+		rm -rf "/Applications/Open Whisper.app"; \
+	fi
+	@echo "==> Installing to /Applications/Open Whisper.app ..."
+	@cp -R "swift/build/OpenWhisperSwift.app" "/Applications/Open Whisper.app"
+	@echo ""
+	@echo "    Installed. Two things left, both of which need you:"
+	@echo "      1. Open it, then grant Input Monitoring and Accessibility again."
+	@echo "         The grants you gave the build/ copy do not carry over — TCC"
+	@echo "         ties them to the path, and this is a new one."
+	@echo "      2. Settings > General > Open at login, once it is working."
+	@echo ""
+	@echo "    Your settings, stats and downloaded models come across on their"
+	@echo "    own: the container is keyed on the bundle ID, not the location."
+
 swift-xcodeproj:
 	@command -v xcodegen >/dev/null 2>&1 || { \
 		echo "xcodegen not found. Install it with: brew install xcodegen" >&2; \

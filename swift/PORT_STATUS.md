@@ -75,9 +75,11 @@ plan §11 checklist below has only been partly exercised.
 ## After the plan
 
 **Settings moved into a window** (2026-08-14), which the plan did not call for.
-Seven panes in a System Settings-style sidebar, replacing the menu's `Settings ▸`
-submenu and absorbing the onboarding window as its Permissions pane. Built to a
-mockup Sam approved first.
+Five panes in a System Settings-style sidebar — General, Dictation, Speech
+Model, Vocabulary, Permissions — replacing the menu's `Settings ▸` submenu and
+absorbing the onboarding window as its Permissions pane. Built to a mockup Sam
+approved first, then narrowed from seven panes to five once it was clear three
+of them held four controls between them.
 
 The pieces worth knowing:
 
@@ -88,6 +90,8 @@ The pieces worth knowing:
 | `OpenWhisperSpeech/ModelDownloader.swift` | Downloads a tier without switching to it. Cancellable. |
 | `OpenWhisperSwift/SettingsWindow.swift` | The window, the panes enum, the bridge to the app. |
 | `OpenWhisperSwift/SettingsPanes.swift` | The SwiftUI views. |
+| `OpenWhisperSwift/InputPreview.swift` | Opens the mic for the level meter, and never during a dictation. |
+| `OpenWhisperCore/Language.swift` | The language picker's list, and what "Automatic" means. |
 
 `OnboardingWindow.swift` and `TextEditorWindow` are **deleted** — both were
 replaced by panes. `PythonImport.swift` is **deleted** too: Sam dropped the

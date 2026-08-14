@@ -24,6 +24,19 @@ cd swift
 open build/OpenWhisperSwift.app
 ```
 
+To use it as the everyday app rather than a build in a folder:
+
+```bash
+make swift-install   # from the repo root, copies to /Applications
+```
+
+That is not just a copy. TCC keys Input Monitoring and Accessibility to the
+bundle **path**, so the installed copy is a different app to macOS and both
+grants have to be given again. Settings, stats and downloaded models do come
+across untouched — the container is keyed on the bundle ID, not the location.
+The target refuses to overwrite the Python app, which installs under the same
+name.
+
 First build needs the signing identity, shared with the Python app:
 
 ```bash
@@ -134,7 +147,8 @@ otherwise a menu-bar hover away, which no script can do.
 ## The Settings window
 
 Configuration lives in a window (⌘, from the menu), not in the menu itself —
-seven panes in a sidebar, matching System Settings. The Python app put every
+five panes in a sidebar, matching System Settings: General, Dictation, Speech
+Model, Vocabulary, Permissions. The Python app put every
 setting in the menu bar, which meant nothing could show progress, the permission
 rows needed a second window of their own, and each toggle was a four-level
 hover.
@@ -192,6 +206,15 @@ Beyond plan §10's accepted list:
 - **No import from the Python app.** Plan §9 phase 6 called for one and it was
   built; it was dropped before being verified. The stats file formats still
   match, so a hand copy works.
+- **Not every setting is in the window.** Trim silence, streaming
+  transcription and direct typing are optimisations with no upside when off,
+  so surfacing them invited people to make the app worse. They are honoured,
+  and editable in the configuration file.
+- **Whisper's subtitle annotations are stripped.** It writes `[BLANK_AUDIO]`
+  for silence and describes sounds it hears (`(air whooshing)`) because it was
+  trained on caption data. `stripNonSpeechAnnotations` removes them; the
+  Python never did. Kept out of `cleanHallucinations` so that function stays
+  byte-comparable with the Python.
 - **Config is JSON**, not YAML (plan §10 permits this). Same keys, same
   defaults.
 - **Phonetic corrections apply in sorted-key order.** Python uses dict insertion
