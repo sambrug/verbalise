@@ -8,7 +8,7 @@ struct SettingsTests {
     @Test("Defaults match config.example.yaml")
     func defaultsMatchExampleConfig() {
         let s = Settings()
-        #expect(s.transcriptionModel == .turbo)
+        #expect(s.transcriptionModel == .balanced)
         #expect(s.triggerKey == "shift_r")
         #expect(s.language == "en")
         #expect(s.minDuration == 0.5)
@@ -29,15 +29,10 @@ struct SettingsTests {
         #expect(s.advanced.clipboardRestoreDelay == 1.5)
     }
 
-    @Test("All eight Python model keys decode")
-    func allModelKeysDecode() {
-        let keys = ["tiny", "base", "small", "distil-medium",
-                    "medium", "distil-large", "turbo", "large"]
-        for key in keys {
-            #expect(TranscriptionModel(rawValue: key) != nil, "\(key) should decode")
-        }
-        #expect(TranscriptionModel.allCases.count == keys.count)
-    }
+    // Legacy Python model-key compatibility is covered in
+    // WhisperKitModelMapTests, which exercises it through Decodable — the
+    // path a real config actually takes. Raw-value lookup deliberately does
+    // not accept the old names.
 
     @Test("An empty config file yields all defaults")
     func emptyConfigYieldsDefaults() throws {
@@ -59,7 +54,7 @@ struct SettingsTests {
         #expect(s.soundEnabled == true)
         #expect(s.advanced.fastTypingMaxChars == 200)
         // Untouched keys keep their documented defaults.
-        #expect(s.transcriptionModel == .turbo)
+        #expect(s.transcriptionModel == .balanced)
         #expect(s.advanced.clipboardRestoreDelay == 1.5)
         #expect(s.advanced.trimSilenceEnabled == true)
     }
@@ -67,7 +62,7 @@ struct SettingsTests {
     @Test("Settings round-trip through JSON")
     func roundTrip() throws {
         var s = Settings()
-        s.transcriptionModel = .distilLarge
+        s.transcriptionModel = .accurate
         s.triggerKey = "ctrl_r"
         s.vocabulary = ["FNOL", "Kubernetes"]
         s.phoneticCorrections = ["ethanol": "FNOL"]
@@ -158,18 +153,18 @@ struct SettingsTests {
 
     // MARK: - Derived values
 
-    @Test("Distil models force English regardless of configured language")
-    func distilModelsForceEnglish() {
+    @Test("The configured language is honoured on every tier")
+    func languageHonouredOnEveryTier() {
+        // The Python clamped its distil models to English because they were
+        // English-only builds (daemon.py:1078). None of the three tiers is,
+        // so a user who sets a language must get it whichever tier they pick.
         var s = Settings()
         s.language = "fr"
 
-        s.transcriptionModel = .distilLarge
-        #expect(s.effectiveLanguage == "en")
-        s.transcriptionModel = .distilMedium
-        #expect(s.effectiveLanguage == "en")
-
-        s.transcriptionModel = .turbo
-        #expect(s.effectiveLanguage == "fr")
+        for tier in TranscriptionModel.allCases {
+            s.transcriptionModel = tier
+            #expect(s.effectiveLanguage == "fr", "\(tier) should honour the language")
+        }
     }
 
     @Test("Phonetic corrections are exposed in a deterministic order")

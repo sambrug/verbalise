@@ -40,6 +40,17 @@ if [ -f "$REPO_ROOT/assets/AppIcon.icns" ]; then
     cp "$REPO_ROOT/assets/AppIcon.icns" "$BUNDLE/Contents/Resources/AppIcon.icns"
 fi
 
+# The bundled speech model, if it has been staged. Absent in a normal
+# development build, which falls back to downloading on demand rather than
+# making every rebuild copy a gigabyte around. Run Scripts/fetch-default-model.sh
+# before a release or App Store archive.
+if [ -d "Resources/Models" ] && [ -n "$(ls -A Resources/Models 2>/dev/null)" ]; then
+    echo "    including bundled model ($(du -sh Resources/Models | cut -f1))"
+    cp -R "Resources/Models" "$BUNDLE/Contents/Resources/Models"
+else
+    echo "    no bundled model staged — the app will download on first use"
+fi
+
 echo "==> Signing as '$IDENTITY' (sandboxed)..."
 codesign --force \
     --sign "$IDENTITY" \

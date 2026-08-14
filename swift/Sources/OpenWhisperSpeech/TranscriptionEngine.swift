@@ -18,12 +18,11 @@ public actor TranscriptionEngine: Transcriber {
     }
 
     public enum EngineError: Error, LocalizedError {
-        case modelUnavailable(TranscriptionModel)
+        case noStorage
 
         public var errorDescription: String? {
             switch self {
-            case .modelUnavailable(let model):
-                "No CoreML build of \(model.rawValue) is published."
+            case .noStorage: "Could not find a place to store speech models."
             }
         }
     }
@@ -72,32 +71,59 @@ public actor TranscriptionEngine: Transcriber {
 
     // MARK: - Loading
 
+    /// Where a model already sits, if it does. Checked before any download.
+    ///
+    /// The bundled copy comes first: `balanced` ships inside the app, so a
+    /// fresh install must be able to dictate immediately rather than waiting
+    /// on a download it does not need.
+    private static func existingFolder(for variant: String) -> URL? {
+        if let bundled = Bundle.main.url(
+            forResource: variant, withExtension: nil, subdirectory: "Models"
+        ), FileManager.default.fileExists(atPath: bundled.path) {
+            return bundled
+        }
+        // WhisperKit lays downloads out as <base>/models/<repo>/<variant>.
+        if let storage = modelStorage {
+            let downloaded = storage
+                .appendingPathComponent("models/argmaxinc/whisperkit-coreml", isDirectory: true)
+                .appendingPathComponent(variant, isDirectory: true)
+            if FileManager.default.fileExists(atPath: downloaded.path) {
+                return downloaded
+            }
+        }
+        return nil
+    }
+
     /// Downloads if needed, then loads. Safe to call repeatedly.
     public func ensureLoaded() async throws {
         let model = settings.transcriptionModel
         if whisperKit != nil, loadedModel == model { return }
 
-        guard let variant = model.whisperKitModelName else {
-            throw EngineError.modelUnavailable(model)
-        }
-
+        let variant = model.whisperKitModelName
         let started = Date()
         let wasCold = whisperKit == nil
         unload()
 
-        // Download explicitly rather than letting the config do it implicitly,
-        // so there is a progress figure to show. The Python app's silent
-        // "Loading…" hang on first use of a model is the thing being replaced
-        // here -- a multi-gigabyte download with no feedback reads as a freeze.
-        onPhase(.downloading(nil))
-        let folder = try await WhisperKit.download(
-            variant: variant,
-            downloadBase: Self.modelStorage,
-            progressCallback: { [onPhase] progress in
-                let fraction = progress.fractionCompleted
-                onPhase(.downloading(fraction > 0 ? fraction : nil))
-            }
-        )
+        let folder: URL
+        if let existing = Self.existingFolder(for: variant) {
+            folder = existing
+            log("model: using existing \(variant) at \(existing.lastPathComponent)")
+        } else {
+            // Download explicitly rather than letting the config do it
+            // implicitly, so there is a progress figure to show. The Python
+            // app's silent "Loading…" on first use of a model is what this
+            // replaces -- a download this size with no feedback reads as a
+            // freeze.
+            onPhase(.downloading(nil))
+            folder = try await WhisperKit.download(
+                variant: variant,
+                downloadBase: Self.modelStorage,
+                progressCallback: { [onPhase] progress in
+                    let fraction = progress.fractionCompleted
+                    onPhase(.downloading(fraction > 0 ? fraction : nil))
+                }
+            )
+        }
 
         onPhase(.loading)
         let config = WhisperKitConfig(

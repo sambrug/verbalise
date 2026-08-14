@@ -1,33 +1,75 @@
 import Foundation
 
-/// Speech model keys. The eight from the Python registry (daemon.py:51), kept
-/// as the wire format so existing configs load unchanged. The mapping to
-/// WhisperKit model names is resolved in Phase 4 (plan §7); the *key* is what
-/// the config and menu speak.
+/// Speech model choice, as three tiers rather than the Python's eight keys
+/// (daemon.py:51).
+///
+/// A deliberate divergence from plan §4, which asked for the eight keys
+/// preserved. Those eight existed because MLX published that many; WhisperKit's
+/// CoreML builds do not line up with them one-for-one, and several would have
+/// been near-duplicates or unavailable — `distil-medium.en` is not published at
+/// all. Three tiers the user can reason about beat eight where two are broken.
+///
+/// `balanced` is the default and the one shipped inside the app bundle; the
+/// other two download on demand, so the package carries one model rather than
+/// three.
 public enum TranscriptionModel: String, CaseIterable, Codable, Sendable {
-    case tiny, base, small
-    case distilMedium = "distil-medium"
-    case medium
-    case distilLarge = "distil-large"
-    case turbo, large
-
-    /// Distil models are English-only; the Python app forces `language: en`
-    /// for them (daemon.py:1078).
-    public var isEnglishOnly: Bool {
-        self == .distilMedium || self == .distilLarge
-    }
+    case fast
+    case balanced
+    case accurate
 
     public var displayName: String {
         switch self {
-        case .tiny: "Tiny"
-        case .base: "Base"
-        case .small: "Small"
-        case .distilMedium: "Distil Medium (English)"
-        case .medium: "Medium"
-        case .distilLarge: "Distil Large (English)"
-        case .turbo: "Turbo"
-        case .large: "Large"
+        case .fast: "Fast"
+        case .balanced: "Balanced"
+        case .accurate: "Accurate"
         }
+    }
+
+    /// Shown next to the name so the download cost is visible before choosing.
+    public var approximateDownloadSize: String {
+        switch self {
+        case .fast: "216 MB"
+        case .balanced: "954 MB"
+        case .accurate: "3 GB"
+        }
+    }
+
+    public var summary: String {
+        switch self {
+        case .fast: "Quickest, lowest accuracy. Good for short notes."
+        case .balanced: "Included with the app. The best trade-off for most dictation."
+        case .accurate: "Highest accuracy, slowest, largest download."
+        }
+    }
+
+    /// The model that ships inside the bundle.
+    public static let bundled: TranscriptionModel = .balanced
+
+    /// Accepts the Python app's eight key names as aliases.
+    ///
+    /// An existing config naming `turbo` or `tiny` must keep working rather
+    /// than failing validation and dumping the user back to defaults, so the
+    /// old names map onto the nearest tier.
+    static func fromLegacyName(_ raw: String) -> TranscriptionModel? {
+        switch raw {
+        case "tiny", "base", "small": .fast
+        case "medium", "distil-medium", "distil-large", "turbo": .balanced
+        case "large": .accurate
+        default: nil
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        guard let model = TranscriptionModel(rawValue: raw)
+                ?? TranscriptionModel.fromLegacyName(raw)
+        else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Unknown transcription_model '\(raw)'"
+            ))
+        }
+        self = model
     }
 }
 
@@ -77,7 +119,7 @@ public struct AdvancedSettings: Codable, Equatable, Sendable {
 /// the app for a file this small, and stays hand-editable, which is what
 /// "Open Config" relies on.
 public struct Settings: Codable, Equatable, Sendable {
-    public var transcriptionModel: TranscriptionModel = .turbo
+    public var transcriptionModel: TranscriptionModel = .bundled
     public var triggerKey: String = "shift_r"
     public var language: String = "en"
     public var minDuration: Double = 0.5
@@ -145,11 +187,12 @@ public struct Settings: Codable, Equatable, Sendable {
             .map { (misheard: $0.key, correct: $0.value) }
     }
 
-    /// The language to actually request, honouring the distil models'
-    /// English-only constraint (daemon.py:1078).
-    public var effectiveLanguage: String {
-        transcriptionModel.isEnglishOnly ? "en" : language
-    }
+    /// The language to request.
+    ///
+    /// The Python forced `en` for its distil models, which were English-only
+    /// (daemon.py:1078). None of the three tiers here is English-only, so that
+    /// clamp no longer applies and the configured language is always honoured.
+    public var effectiveLanguage: String { language }
 }
 
 // MARK: - Validation
