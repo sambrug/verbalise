@@ -47,14 +47,6 @@ public enum StatsFormatter {
         wordFormatter.string(from: NSNumber(value: value)) ?? String(value)
     }
 
-    /// menubar.py:654
-    public static func formatStats(_ usage: UsageStats) -> String {
-        if usage.totalWords == 0 && usage.totalRecordings == 0 {
-            return "No dictations yet"
-        }
-        return "\(grouped(usage.totalWords)) words • \(grouped(usage.totalRecordings)) recordings"
-    }
-
     /// menubar.py:672. Returns nil when there is nothing worth showing yet.
     ///
     /// Saved time is how long the words would have taken to type, less how long

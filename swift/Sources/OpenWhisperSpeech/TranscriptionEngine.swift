@@ -51,17 +51,6 @@ public actor TranscriptionEngine: Transcriber {
 
     public var isLoaded: Bool { whisperKit != nil }
 
-    /// Whether the configured model is already on disk.
-    ///
-    /// The distinction that matters to the user is not loaded-vs-not, it is
-    /// *seconds vs minutes*. A model on disk loads in a few seconds, which can
-    /// happen while they are still speaking. A model that has to be fetched is
-    /// a multi-minute download, and starting a recording in front of that only
-    /// produces a dictation that appears to hang.
-    public var isDownloaded: Bool {
-        Self.isDownloaded(settings.transcriptionModel)
-    }
-
     /// Whether a *given* tier is on disk.
     ///
     /// `nonisolated` because the Settings window asks about all three tiers

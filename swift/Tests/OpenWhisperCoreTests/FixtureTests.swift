@@ -49,7 +49,6 @@ struct FixtureTests {
         let looksLikeRepetitionLoop: [BoolCase]
         let joinStreamingChunks: [JoinCase]
         let applyPhoneticCorrections: [PhoneticCase]
-        let formatStats: [StatsCase]
         let formatTimeSaved: [OptionalStatsCase]
     }
 
@@ -136,18 +135,7 @@ struct FixtureTests {
         }
     }
 
-    @Test("format_stats matches Python")
-    func formatStatsMatchesPython() {
-        for testCase in Self.fixtures.formatStats {
-            let actual = StatsFormatter.formatStats(testCase.input)
-            #expect(
-                actual == testCase.expected,
-                "\(testCase.input) — python \(testCase.expected.debugDescription), swift \(actual.debugDescription)"
-            )
-        }
-    }
-
-    @Test("format_time_saved matches Python")
+        @Test("format_time_saved matches Python")
     func formatTimeSavedMatchesPython() {
         for testCase in Self.fixtures.formatTimeSaved {
             let actual = StatsFormatter.formatTimeSaved(testCase.input)

@@ -27,6 +27,9 @@ public actor ModelDownloader {
     private var tasks: [TranscriptionModel: Task<Void, Never>] = [:]
     private var failures: [TranscriptionModel: String] = [:]
 
+    /// Cancelled downloads awaiting cleanup of whatever they had written.
+    private var cancelled: Set<TranscriptionModel> = []
+
     public init(onChange: @escaping @Sendable ([TranscriptionModel: Double?]) -> Void = { _ in }) {
         self.onChange = onChange
     }
@@ -77,17 +80,41 @@ public actor ModelDownloader {
         }
     }
 
-    /// Abandons a download.
+    /// Abandons a download and throws away what it had written.
     ///
     /// Abandons rather than guarantees a stop: WhisperKit owns the transfer and
     /// may run to completion regardless. What is guaranteed is that the app
-    /// stops reporting it and stops waiting on it -- and a few wasted megabytes
-    /// is the right trade against a Cancel button that hangs. A partial download
-    /// is not left in place as a usable model; the next attempt re-fetches.
+    /// stops reporting it and stops waiting on it, and that nothing is left
+    /// behind afterwards.
+    ///
+    /// The cleanup is the part that matters. "Is this model downloaded" is
+    /// answered by asking whether its folder exists, so a cancelled download
+    /// left its half-written folder looking exactly like a finished one -- the
+    /// row went to "Remove" instead of back to "Download", and selecting it
+    /// would have handed the engine an incomplete model.
+    ///
+    /// Deletion waits for the task to actually unwind. Deleting first races the
+    /// transfer, which would simply write the files again on its way out.
     public func cancel(_ model: TranscriptionModel) {
-        tasks[model]?.cancel()
+        guard let task = tasks[model] else { return }
+
+        cancelled.insert(model)
+        task.cancel()
         tasks[model] = nil
         inFlight.removeValue(forKey: model)
+        onChange(inFlight)
+
+        Task { [weak self] in
+            await task.value
+            await self?.discardPartialDownload(model)
+        }
+    }
+
+    private func discardPartialDownload(_ model: TranscriptionModel) {
+        guard cancelled.remove(model) != nil else { return }
+        TranscriptionEngine.removeDownload(model)
+        // The row is still showing whatever it showed before the folder went;
+        // this is what turns it back into "Download".
         onChange(inFlight)
     }
 

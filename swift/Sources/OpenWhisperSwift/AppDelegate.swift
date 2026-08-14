@@ -73,9 +73,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // seconds; one that needs fetching shows download progress in the menu
         // and gates the trigger key until it lands.
         preloadModel()
+        startIdleTimer()
+    }
+
+    private func startIdleTimer() {
+        idleTimer?.invalidate()
+        idleTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                guard let self = AppDelegate.shared else { return }
+                let minutes = self.settings.advanced.modelIdleUnloadMinutes
+                let recording = self.dictationState != .idle
+                Task { await self.lifecycle.maybeUnload(
+                    idleMinutes: minutes, isRecording: recording
+                ) }
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        idleTimer?.invalidate()
+        inputPreview.stop()
         keyTap?.stop()
         pill?.quit()
         log("Open Whisper (Swift) terminating")
@@ -144,6 +161,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Drives the Settings input level meter. Never runs during a dictation.
     let inputPreview = InputPreview()
+
+    /// Drops the speech model after a long idle spell (plan §3, group 11).
+    ///
+    /// This was ported and tested in Phase 3 and then never connected, which
+    /// made `model_idle_unload_minutes` a setting that validated, defaulted to
+    /// 120, and did nothing -- the model stayed resident until quit. Whether
+    /// the ANE makes the reload cheap is beside the point: a menu bar app that
+    /// sits idle all afternoon holding a multi-gigabyte model is a bad citizen.
+    private lazy var lifecycle = ModelLifecycle {
+        Task { @MainActor in
+            await AppDelegate.shared?.engine?.unload()
+            AppDelegate.shared?.menu?.show(state: .idle)
+        }
+    }
+
+    /// Checks the idle threshold. A minute is plenty for a timeout measured in
+    /// hours, and costs nothing while nothing is happening.
+    private var idleTimer: Timer?
 
     private func buildStack() {
         pill = OverlayPill(style: settings.overlayStyle, meter: meter)
@@ -269,6 +304,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     menu?.show(status: "Recording… (waking speech model)")
                     Task.detached { try? await engine.ensureLoaded() }
                 }
+                await lifecycle.noteActivity()
                 await controller.startRecording()
             }
         } else {
@@ -332,8 +368,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 ?? "Downloading model…")
         case .loading:
             menu?.show(status: "Loading model…")
-        case .ready, .idle:
-            break
+        case .ready:
+            // The idle countdown starts from the moment there is something to
+            // unload, not from launch.
+            Task { await lifecycle.noteLoaded() }
+        case .idle:
+            Task { await lifecycle.noteUnloaded() }
         }
         // The engine downloads too, and the Settings window must show that as
         // one download rather than none -- otherwise a model fetched on the way
