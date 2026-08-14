@@ -252,15 +252,22 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         guard let delegate else { return }
         let settings = delegate.currentSettings
 
-        // Trigger key
+        // Trigger key. Combos are listed as well as single keys — a lone
+        // modifier is easy to hit by accident mid-typing, and the config has
+        // always accepted pairs.
         let triggerMenu = NSMenu()
-        for key in TriggerKey.allCases {
+        var addedSeparator = false
+        for combo in TriggerCombo.pickerOptions(including: settings.triggerCombo) {
+            if combo.keys.count > 1, !addedSeparator {
+                triggerMenu.addItem(.separator())
+                addedSeparator = true
+            }
             let item = NSMenuItem(
-                title: key.displayName, action: #selector(pickTriggerKey(_:)), keyEquivalent: ""
+                title: combo.displayName, action: #selector(pickTriggerKey(_:)), keyEquivalent: ""
             )
             item.target = self
-            item.representedObject = key.rawValue
-            item.state = settings.triggerKey == key.rawValue ? .on : .off
+            item.representedObject = combo.configValue
+            item.state = settings.triggerKey == combo.configValue ? .on : .off
             triggerMenu.addItem(item)
         }
         addSubmenu(to: settingsMenu, title: "Trigger Key", submenu: triggerMenu)

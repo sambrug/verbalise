@@ -112,4 +112,39 @@ public struct TriggerCombo: Equatable, Sendable {
     public func involves(keyCode: Int64) -> Bool {
         keys.contains { $0.keyCode == keyCode }
     }
+
+    // MARK: - Menu options
+
+    /// Two-key combos worth offering alongside the single keys.
+    ///
+    /// A combo is not an exotic preference: a single modifier is easy to press
+    /// by accident mid-typing, so pairing two is a common way to make the
+    /// trigger deliberate. `alt_r+shift_r` is the pairing the Python app's own
+    /// config uses.
+    ///
+    /// Right-hand pairings first, since the trigger is held while speaking and
+    /// most people keep their left hand on the keyboard.
+    public static let commonCombos: [TriggerCombo] = [
+        TriggerCombo(keys: [.altR, .shiftR]),
+        TriggerCombo(keys: [.ctrlR, .shiftR]),
+        TriggerCombo(keys: [.cmdR, .shiftR]),
+        TriggerCombo(keys: [.altL, .shiftL]),
+    ]
+
+    /// Everything the trigger picker should list.
+    ///
+    /// `current` is always included, even if it is a combination nobody would
+    /// have picked from a menu. The config accepts any combination of the seven
+    /// keys, so a hand-edited value must appear and be selectable rather than
+    /// leaving the menu with nothing checked and every click silently
+    /// discarding it.
+    public static func pickerOptions(including current: TriggerCombo?) -> [TriggerCombo] {
+        var options = TriggerKey.allCases.map { TriggerCombo(keys: [$0]) }
+        options.append(contentsOf: commonCombos)
+
+        if let current, !options.contains(current) {
+            options.append(current)
+        }
+        return options
+    }
 }

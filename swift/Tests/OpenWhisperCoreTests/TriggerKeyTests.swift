@@ -74,6 +74,47 @@ struct TriggerKeyTests {
         #expect(combo.isFullyHeld(flags: both))
     }
 
+    @Test("The picker offers combos as well as single keys")
+    func pickerOffersCombos() {
+        // A single modifier is easy to press by accident mid-typing, so combos
+        // are a normal preference, not an exotic one — and the config has
+        // always accepted them.
+        let options = TriggerCombo.pickerOptions(including: nil)
+
+        #expect(options.contains(TriggerCombo(keys: [.shiftR])))
+        #expect(options.contains(TriggerCombo(keys: [.altR, .shiftR])))
+        #expect(options.count > TriggerKey.allCases.count)
+    }
+
+    @Test("The current setting always appears, however unusual")
+    func currentSettingAlwaysListed() {
+        // The failure this prevents: a hand-edited config showing nothing
+        // checked in the menu, where any click silently discards it.
+        let unusual = try! #require(TriggerCombo(configValue: "ctrl_l+cmd_r"))
+        let options = TriggerCombo.pickerOptions(including: unusual)
+
+        #expect(options.contains(unusual))
+    }
+
+    @Test("The picker lists no duplicates")
+    func pickerHasNoDuplicates() {
+        // A current setting that is already offered must not be listed twice.
+        let common = TriggerCombo(keys: [.altR, .shiftR])
+        let options = TriggerCombo.pickerOptions(including: common)
+
+        #expect(options.filter { $0 == common }.count == 1)
+    }
+
+    @Test("Every picker option round-trips through its config value")
+    func pickerOptionsRoundTrip() {
+        // The menu stores configValue and the config parses it back; a
+        // mismatch would make an option unselectable.
+        for option in TriggerCombo.pickerOptions(including: nil) {
+            #expect(TriggerCombo(configValue: option.configValue) == option)
+            #expect(!option.displayName.isEmpty)
+        }
+    }
+
     @Test("involves(keyCode:) ignores unrelated modifier traffic")
     func involvesFiltersUnrelatedKeys() {
         let combo = TriggerCombo(keys: [.shiftR])
