@@ -41,6 +41,21 @@ public enum TranscriptionModel: String, CaseIterable, Codable, Sendable {
         ModelCatalog.sizeText(approximateDownloadBytes)
     }
 
+    /// The underlying Whisper model, for the row that already says what the
+    /// tier is for.
+    ///
+    /// "Whisper" is left off all three: it is the same word every time, so
+    /// including it would add width without distinguishing anything. This is
+    /// there for the person who knows what `large-v3-turbo` is and wants to
+    /// confirm it -- it should not compete with the plain-language summary.
+    public var variantName: String {
+        switch self {
+        case .fast: "Small"
+        case .balanced: "Large v3 Turbo"
+        case .accurate: "Large v3"
+        }
+    }
+
     /// One clause, same shape for every tier, naming the trade being made.
     ///
     /// The three are written to be read against each other -- a user picking

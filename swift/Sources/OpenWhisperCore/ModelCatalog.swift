@@ -33,17 +33,22 @@ public struct ModelRow: Equatable, Sendable {
 
     public var title: String { model.displayName }
 
-    /// The second line: what the tier is for, then its size or its progress.
+    /// The second line: what the tier is for, which model that is, then its
+    /// size or its progress.
     ///
-    /// One line rather than two because the size *is* part of the trade-off
-    /// being described -- "most accurate, slowest" and "3.0 GB" are the same
-    /// decision, and splitting them makes the row taller for no gain.
+    /// One line rather than three because all of it is the same decision --
+    /// "most accurate, slowest", "Large v3" and "3.0 GB" are one trade-off
+    /// described three ways, and splitting them makes the row taller for no
+    /// gain. The model name sits in the middle deliberately: plain language
+    /// first for the person choosing, the identifier next for the person
+    /// checking.
     public var detail: String {
         switch availability {
         case .downloading(let fraction):
-            return "\(model.summary) · \(ModelCatalog.progressText(for: model, fraction: fraction))"
+            return "\(model.summary) · \(model.variantName) · "
+                + ModelCatalog.progressText(for: model, fraction: fraction)
         case .inUse, .ready, .absent:
-            return "\(model.summary) · \(model.approximateDownloadSize)"
+            return "\(model.summary) · \(model.variantName) · \(model.approximateDownloadSize)"
         }
     }
 
