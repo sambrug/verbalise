@@ -26,13 +26,17 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     private let lastItem = NSMenuItem(title: "No dictations yet", action: nil, keyEquivalent: "")
     private let recentMenu = NSMenu()
 
-    /// Persistent alert shown as a scrolling line (menubar.py:1022). Cleared
-    /// when the next dictation succeeds.
+    /// Persistent alert (menubar.py:1022). Cleared when the next dictation
+    /// succeeds.
     private var alert: String?
-    private var marqueeTimer: Timer?
-    private var marqueeOffset = 0
 
-    private var dictationCount = 0
+    /// The product name, from the bundle, so the menu cannot drift from what
+    /// Finder and the About panel call it.
+    static var appName: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+            ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
+            ?? "Open Whisper"
+    }
 
     init(delegate: any StatusMenuDelegate) {
         self.delegate = delegate
@@ -47,7 +51,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         // it look shrunken next to them. 16pt matches their optical weight.
         let configuration = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
         let icon = NSImage(
-            systemSymbolName: "waveform", accessibilityDescription: "Open Whisper Swift"
+            systemSymbolName: "waveform", accessibilityDescription: Self.appName
         )?.withSymbolConfiguration(configuration)
         icon?.isTemplate = true
         statusItem.button?.image = icon
@@ -76,6 +80,9 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         lastItem.target = self
         lastItem.action = #selector(copyLast)
         lastItem.toolTip = "Click to copy"
+        // Nothing to copy yet, so nothing to click. Enabled the moment a
+        // transcript arrives.
+        lastItem.isEnabled = false
         menu.addItem(lastItem)
 
         let recentItem = NSMenuItem(title: "Recent Transcripts", action: nil, keyEquivalent: "")
@@ -92,8 +99,9 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        add(to: menu, title: "About \(Self.appName)", action: #selector(showAbout))
         add(to: menu, title: "Restart", action: #selector(restart))
-        add(to: menu, title: "Quit Open Whisper Swift", action: #selector(quit), key: "q")
+        add(to: menu, title: "Quit \(Self.appName)", action: #selector(quit), key: "q")
 
         statusItem.menu = menu
     }
@@ -116,23 +124,17 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     func show(state: DictationState) {
         switch state {
-        case .idle: stateItem.title = badged("Ready")
-        case .recording: stateItem.title = badged("Recording…")
-        case .transcribing: stateItem.title = badged("Transcribing…")
+        case .idle: stateItem.title = "Ready"
+        case .recording: stateItem.title = "Recording…"
+        case .transcribing: stateItem.title = "Transcribing…"
         }
     }
 
     func show(status: String) {
-        stateItem.title = badged(status)
-    }
-
-    /// The count badge from menubar.py's status line.
-    private func badged(_ text: String) -> String {
-        dictationCount > 0 ? "\(text)  (\(dictationCount))" : text
+        stateItem.title = status
     }
 
     func noteDictationCompleted() {
-        dictationCount += 1
         // A successful dictation means whatever the alert warned about is
         // no longer happening.
         clearAlert()
@@ -140,6 +142,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     func show(lastTranscript text: String) {
         lastItem.title = "“\(Self.truncate(text))”"
+        lastItem.isEnabled = true
     }
 
     /// Truncates on a word boundary rather than mid-word (menubar.py's
@@ -159,39 +162,38 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     // MARK: - Alerts
 
-    /// A persistent alert scrolls, because the menu bar has no room for the
-    /// full text and a truncated warning tells the user nothing.
+    /// One truncated line with a warning symbol, and the full text on hover.
+    ///
+    /// This replaces a marquee. The Python scrolled the message a character at
+    /// a time because a menu bar has no room for a long warning -- but nothing
+    /// on macOS scrolls text at you, it is hard to read at any speed, and it
+    /// animates forever in a menu the user is not looking at. Truncating with
+    /// the whole message in the tooltip is what the platform does, and the
+    /// alerts worth showing lead with their point anyway.
     func show(alert message: String) {
-        alert = message
+        self.alert = message
+        alertItem.title = Self.truncate(message, limit: 44)
+        alertItem.toolTip = message
+        alertItem.image = Self.warningSymbol
         alertItem.isHidden = false
-        marqueeOffset = 0
-        marqueeTimer?.invalidate()
-        marqueeTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in
-            MainActor.assumeIsolated { self.tickMarquee() }
-        }
-        tickMarquee()
     }
 
     func clearAlert() {
         alert = nil
         alertItem.isHidden = true
-        marqueeTimer?.invalidate()
-        marqueeTimer = nil
+        alertItem.toolTip = nil
     }
 
-    private func tickMarquee() {
-        guard let alert else { return }
-        let width = 38
-        guard alert.count > width else {
-            alertItem.title = "⚠︎ \(alert)"
-            return
-        }
-        let padded = Array(alert + "   •   ")
-        let start = marqueeOffset % padded.count
-        let window = (0..<width).map { padded[(start + $0) % padded.count] }
-        alertItem.title = "⚠︎ " + String(window)
-        marqueeOffset += 1
-    }
+    /// A real symbol rather than a "⚠︎" in the title string: it picks up the
+    /// menu's own tinting and stays aligned with the text baseline.
+    private static let warningSymbol: NSImage? = {
+        let configuration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
+            .applying(.init(paletteColors: [.systemOrange]))
+        return NSImage(
+            systemSymbolName: "exclamationmark.triangle.fill",
+            accessibilityDescription: "Warning"
+        )?.withSymbolConfiguration(configuration)
+    }()
 
     // MARK: - Recent transcripts
 
@@ -207,7 +209,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         }
 
         for (index, entry) in recent.enumerated() {
-            let time = entry.ts.split(separator: "T").last.map(String.init) ?? entry.ts
+            let time = entry.date?.formatted(date: .omitted, time: .shortened)
+                ?? entry.ts
             let item = NSMenuItem(
                 title: "\(time)  \(Self.truncate(entry.text, limit: 44))",
                 action: #selector(copyRecent(_:)),
@@ -243,6 +246,20 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     @objc private func showSettings() {
         delegate?.showSettings()
+    }
+
+    @objc private func showAbout() {
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .credits: NSAttributedString(
+                string: "Dictation that runs entirely on this Mac.\n"
+                    + "Nothing you say is sent to a server.",
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+                    .foregroundColor: NSColor.secondaryLabelColor,
+                ]
+            )
+        ])
     }
 
     @objc private func restart() {

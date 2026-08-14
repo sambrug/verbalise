@@ -18,11 +18,27 @@ public struct RecentTranscript: Codable, Equatable, Sendable {
     /// `time.strftime('%Y-%m-%dT%H:%M:%S')`, which is naive local time.
     /// Matching it matters because both apps may write the same file.
     public static func timestamp(for date: Date = Date()) -> String {
+        Self.formatter.string(from: date)
+    }
+
+    /// The stored string back as a date, so the menu can show the time the way
+    /// this user's Mac writes times rather than echoing the storage format.
+    ///
+    /// "13:43:27" is a wire format, not something to put in front of someone:
+    /// it forces 24-hour on a user who has chosen 12-hour, and the seconds are
+    /// noise in a list of ten items.
+    public var date: Date? {
+        Self.formatter.date(from: ts)
+    }
+
+    /// Fixed locale on purpose: this parses and writes the *storage* format,
+    /// which must not shift with the user's region.
+    private static let formatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-        return formatter.string(from: date)
-    }
+        return formatter
+    }()
 }
 
 /// Lifetime counters and the recent-transcripts ring (daemon.py:599-648).

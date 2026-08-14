@@ -138,3 +138,32 @@ struct StatsStoreTests {
         #expect(await store.stats.totalWords == 0)
     }
 }
+
+/// The stored timestamp is a wire format; the menu shows it as a date.
+@Suite("Recent transcript timestamps")
+struct RecentTimestampTests {
+
+    @Test("A stored timestamp round-trips back to a date")
+    func timestampRoundTrips() throws {
+        let now = Date(timeIntervalSince1970: 1_760_000_000)
+        let entry = RecentTranscript(text: "hello", ts: RecentTranscript.timestamp(for: now))
+        let parsed = try #require(entry.date)
+        // Whole seconds: the format carries no fraction.
+        #expect(abs(parsed.timeIntervalSince(now)) < 1)
+    }
+
+    @Test("The Python's format parses")
+    func pythonFormatParses() {
+        // Both apps may write this file, so the Python's exact output has to
+        // read back rather than silently falling through to the raw string.
+        #expect(RecentTranscript(text: "x", ts: "2026-08-14T13:43:27").date != nil)
+    }
+
+    @Test("A malformed timestamp is nil rather than a wrong date")
+    func malformedIsNil() {
+        // The menu falls back to showing the raw string, which is honest;
+        // inventing a date would not be.
+        #expect(RecentTranscript(text: "x", ts: "not a date").date == nil)
+        #expect(RecentTranscript(text: "x", ts: "").date == nil)
+    }
+}
