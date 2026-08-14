@@ -231,7 +231,11 @@ public actor DictationController {
                 return
             }
 
-            let cleaned = TextPipeline.cleanHallucinations(raw)
+            // Annotations first: stripping "[BLANK_AUDIO]" can leave nothing
+            // but punctuation behind, and cleaning is what recognises that as
+            // "no transcription" and types nothing at all.
+            let spoken = TextPipeline.stripNonSpeechAnnotations(raw)
+            let cleaned = TextPipeline.cleanHallucinations(spoken)
             let corrected = TextPipeline.applyPhoneticCorrections(
                 cleaned, corrections: settings.orderedPhoneticCorrections
             )

@@ -300,7 +300,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
         NSApp.orderFrontStandardAboutPanel(options: [
             .credits: NSAttributedString(
-                string: "Dictation that runs entirely on this Mac.",
+                string: "Dictation that runs entirely on your Mac.",
                 attributes: [
                     .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
                     .foregroundColor: NSColor.secondaryLabelColor,

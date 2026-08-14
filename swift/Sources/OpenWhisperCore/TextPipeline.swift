@@ -115,6 +115,100 @@ public enum TextPipeline {
         return cleaned
     }
 
+    // MARK: - Non-speech annotations
+
+    /// Square-bracketed annotations: `[BLANK_AUDIO]`, `[MUSIC]`, `[INAUDIBLE]`.
+    static let bracketedAnnotation =
+        try! NSRegularExpression(pattern: #"\[[^\]]*\]"#)
+
+    /// A parenthesised group and its contents, examined before removal.
+    static let parenthesisedGroup =
+        try! NSRegularExpression(pattern: #"\(([^)]*)\)"#)
+
+    /// Music note runs and anything between a matched pair: `♪ la la la ♪`.
+    static let musicNotes =
+        try! NSRegularExpression(pattern: #"[♪♫][^♪♫]*[♪♫]|[♪♫]"#)
+
+    static let repeatedWhitespace =
+        try! NSRegularExpression(pattern: #"\s{2,}"#)
+
+    /// Removes the caption conventions Whisper reproduces for non-speech sound.
+    ///
+    /// Not a hallucination in the usual sense and not a bug: Whisper was
+    /// trained on subtitle data, which annotates audio that is not speech.
+    /// So it writes `[BLANK_AUDIO]` for silence, and describes what it hears
+    /// -- a fan becomes `(air whooshing)`, exactly as a captioner would write
+    /// it. Correct behaviour for subtitling, useless when the output is being
+    /// typed into someone's document.
+    ///
+    /// **This has no counterpart in the Python app**, which never filtered
+    /// these. Kept separate from `cleanHallucinations` for that reason: that
+    /// function is verified line by line against the Python's output, and
+    /// folding a new rule into it would break the comparison that makes the
+    /// port trustworthy.
+    ///
+    /// Brackets and music notes go unconditionally -- neither survives dictated
+    /// speech. Parentheses are treated more carefully, because a speaker really
+    /// can dictate a parenthetical aside and deleting it would be far worse
+    /// than leaving a stray `(coughs)` in. Only short groups with no sentence
+    /// punctuation are removed, which is the shape every sound annotation takes
+    /// and which a spoken aside almost never does.
+    public static func stripNonSpeechAnnotations(_ text: String) -> String {
+        guard !text.isEmpty else { return "" }
+        guard text.contains("[") || text.contains("(")
+                || text.contains("♪") || text.contains("♫")
+        else { return text }
+
+        var result = replacingMatches(of: bracketedAnnotation, in: text, with: " ")
+        result = replacingMatches(of: musicNotes, in: result, with: " ")
+        result = removingSoundAnnotationParentheses(from: result)
+
+        result = replacingMatches(of: repeatedWhitespace, in: result, with: " ")
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// How many words a parenthesised group may hold and still read as a sound
+    /// annotation rather than as something the speaker said.
+    static let maximumAnnotationWords = 5
+
+    private static func removingSoundAnnotationParentheses(from text: String) -> String {
+        let full = NSRange(text.startIndex..., in: text)
+        var result = text
+
+        // Back to front, so each removal leaves earlier ranges valid.
+        for match in parenthesisedGroup.matches(in: text, options: [], range: full).reversed() {
+            guard let whole = Range(match.range, in: text),
+                  let inner = Range(match.range(at: 1), in: text)
+            else { continue }
+
+            guard looksLikeSoundAnnotation(String(text[inner])) else { continue }
+            result.replaceSubrange(whole, with: " ")
+        }
+        return result
+    }
+
+    /// Short, and not a sentence. "(air whooshing)" and "(door closes)" pass;
+    /// "(and this is the part I meant, incidentally)" does not.
+    static func looksLikeSoundAnnotation(_ inner: String) -> Bool {
+        let trimmed = inner.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+        guard !trimmed.contains(where: { ".!?".contains($0) }) else { return false }
+
+        let words = trimmed.split(whereSeparator: \.isWhitespace)
+        return words.count <= maximumAnnotationWords
+    }
+
+    private static func replacingMatches(
+        of regex: NSRegularExpression, in text: String, with template: String
+    ) -> String {
+        regex.stringByReplacingMatches(
+            in: text,
+            options: [],
+            range: NSRange(text.startIndex..., in: text),
+            withTemplate: template
+        )
+    }
+
     // MARK: - Streaming chunk joining
 
     /// Joins per-chunk streaming transcripts into one continuous text
