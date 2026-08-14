@@ -15,7 +15,11 @@ struct SettingsRootView: View {
                 )
                 .tag(pane)
             }
-            .navigationSplitViewColumnWidth(200)
+            // A range rather than a fixed width: 200 left "Speech Model"
+            // and the Permissions attention dot with nothing to spare, and a
+            // fixed column cannot grow even though the window resizes. 220 is
+            // roughly what System Settings uses.
+            .navigationSplitViewColumnWidth(min: 210, ideal: 220, max: 280)
             // No sidebar toggle. NavigationSplitView adds one to the toolbar
             // by default, and it sits at the sidebar's trailing edge -- so
             // clicking it collapses the sidebar and the button jumps across
@@ -145,8 +149,9 @@ private struct GeneralPane: View {
             } header: {
                 Text("Advanced")
             } footer: {
-                Text("Restarting can resolve problems with dictation.")
-                    .settingsFootnote()
+                Text("Additional options are available in the configuration "
+                     + "file. Restarting can resolve problems with dictation.")
+                .settingsFootnote()
             }
         }
         .paneStyle()
@@ -155,11 +160,16 @@ private struct GeneralPane: View {
 
 // MARK: - Dictation
 
-/// Trigger, microphone and output in one place.
+/// The trigger key and the microphone: the two things a new user has to get
+/// right, and the two they reason about together.
 ///
-/// These were three panes with four controls between them. Beyond the empty
-/// rooms, splitting them hid the fact that the trigger key and the microphone
-/// are the two things a new user actually has to get right.
+/// What is deliberately absent is as much the point. Trim silence, streaming
+/// transcription and direct typing were all surfaced here at one stage. Every
+/// one of them is an optimisation with no upside when switched off, so offering
+/// them as peers of "Microphone" invited people to turn off things that only
+/// make the app worse. They are still honoured, still in the configuration
+/// file, and still reachable for anyone troubleshooting — just not presented as
+/// an everyday choice.
 private struct DictationPane: View {
     @ObservedObject var model: SettingsModel
 
@@ -206,11 +216,6 @@ private struct DictationPane: View {
                         )
                     }
                 }
-
-                Toggle(isOn: model.binding(\.advanced.trimSilenceEnabled)) {
-                    Text("Trim silence")
-                    Text("Removes silence from the start and end.")
-                }
             } header: {
                 Text("Microphone")
             } footer: {
@@ -222,19 +227,6 @@ private struct DictationPane: View {
                 }
             }
 
-            Section {
-                Toggle(isOn: model.binding(\.advanced.streamingTranscribeEnabled)) {
-                    Text("Transcribe while you speak")
-                    Text("Reduces the wait after long dictations.")
-                }
-
-                Toggle(isOn: model.binding(\.advanced.fastTypingEnabled)) {
-                    Text("Type short results directly")
-                    Text("Longer results are pasted instead.")
-                }
-            } header: {
-                Text("Text Output")
-            }
         }
         .paneStyle()
         // The microphone is open only while this pane is on screen. macOS
