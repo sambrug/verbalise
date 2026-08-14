@@ -64,7 +64,15 @@ public final class AVAudioCaptureStream: AudioStream, @unchecked Sendable {
         let converter = AVAudioConverter(from: hardwareFormat, to: targetFormat)
         lock.withLock { self.converter = converter }
 
-        input.installTap(onBus: 0, bufferSize: 4096, format: hardwareFormat) { [weak self] buffer, _ in
+        // 1024 frames is ~21ms at 48kHz, so roughly 47 buffers a second.
+        //
+        // The size is set by the *meter*, not by transcription, which is happy
+        // with any chunking. The pill samples levels at 20Hz, and a tap that
+        // delivered slower than that would leave some frames with no new audio
+        // to show — producing exactly the alternating real/decayed steps that
+        // read as judder. Delivering comfortably faster than the animation
+        // samples means every frame reflects real sound.
+        input.installTap(onBus: 0, bufferSize: 1024, format: hardwareFormat) { [weak self] buffer, _ in
             self?.handle(buffer, targetFormat: targetFormat)
         }
         tapInstalled = true

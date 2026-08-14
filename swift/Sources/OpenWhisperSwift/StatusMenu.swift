@@ -94,6 +94,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        add(to: menu, title: "Permissions…", action: #selector(showPermissions))
         add(to: menu, title: "Open Config", action: #selector(openConfig))
         add(to: menu, title: "View Logs", action: #selector(viewLogs))
         add(to: menu, title: "Launch at Login", action: #selector(toggleLoginItem))
@@ -482,6 +483,10 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     @objc private func viewLogs() {
         LogWindow.show()
+    }
+
+    @objc private func showPermissions() {
+        OnboardingWindow.show()
     }
 
     @objc private func restart() {

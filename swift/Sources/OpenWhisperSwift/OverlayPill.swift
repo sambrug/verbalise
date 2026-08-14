@@ -349,11 +349,17 @@ final class OverlayPill {
     private let meter: LevelMeter
     private var levelTimer: Timer?
 
-    /// Plan §4 asks for bars "fed ~10 Hz". Sampling on a timer at a fixed rate,
-    /// rather than pushing once per audio buffer, is what makes the waveform
-    /// scroll evenly — buffer arrival is neither regular nor at a rate the
-    /// animation should inherit.
-    private static let levelSampleInterval: TimeInterval = 1.0 / 12.0
+    /// 20Hz, matching `PillBarsView`'s own `TimelineView(minimumInterval: 0.05)`
+    /// so a new level lands on every redraw rather than on some of them.
+    ///
+    /// Plan §4 says "~10 Hz", which is what the Python fed and what this first
+    /// did — but one push shifts the 20-bar window by one bar, so 10Hz means
+    /// the waveform takes two full seconds to cross the pill, which reads as
+    /// sluggish next to the processing animation. 20Hz halves that. The tap is
+    /// sized to deliver well above this rate so every frame has real audio
+    /// behind it; sampling faster than the audio arrives would just trade
+    /// slowness back for judder.
+    private static let levelSampleInterval: TimeInterval = 1.0 / 20.0
 
     init(style: OverlayStyle, meter: LevelMeter) {
         self.style = style

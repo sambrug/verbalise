@@ -40,6 +40,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startKeyTap()
         loadStats()
 
+        // Before anything else the user might try. Without a granted trigger
+        // key the app is silently inert, which is exactly the confusion this
+        // window exists to prevent.
+        OnboardingWindow.showIfNeeded()
+
         // Pay CoreAudio's first-activation cost now, while nobody is waiting,
         // rather than on the user's first keypress.
         Task.detached(priority: .utility) { [rate = settings.sampleRate] in
