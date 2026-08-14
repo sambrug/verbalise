@@ -35,9 +35,22 @@ Swift Testing ships inside the CLT but outside the default search path, so
 `Scripts/test.sh` passes `-F /Library/Developer/CommandLineTools/Library/Developer/Frameworks`.
 With Xcode installed that directory is absent and the flags are skipped.
 
-To get the plan's `.xcodeproj` path back, install Xcode and run `xcodegen`
-against the checked-in `project.yml` (Phase 6). The SwiftPM build remains
-the one that is known to work here.
+**Xcode is being installed** (as of 2026-08-14), which relaxes this. Once it
+lands:
+
+```bash
+sudo xcode-select -s /Applications/Xcode.app   # needs Sam's password
+```
+
+`Scripts/test.sh` already handles both worlds — it asks `xcode-select -p`
+which toolchain is *active* and only applies the CLT workarounds when the CLT
+is the one in charge. Nothing needs changing to switch over.
+
+**Keep SwiftPM as the build of record even then.** It is what every commit
+here is tested against, and it works without Xcode at all — useful for CI and
+for a fresh machine. The `.xcodeproj` is an additional entry point, not a
+replacement: Phase 6 adds `project.yml` so `xcodegen` can generate one for
+anyone who prefers to work in the IDE.
 
 ## Resolved plan gaps
 
@@ -49,7 +62,7 @@ the one that is known to work here.
 
 | Phase | State | Gate |
 |---|---|---|
-| 1. Scaffold + sandbox proof | **Done** (`f258e48`) | Builds, signs sandboxed, runs, tap installs. TCC-gated behaviours still need a human — see below. |
+| 1. Scaffold + sandbox proof | **Done + verified** (`f258e48`) | Builds, signs sandboxed, runs. Both TCC-gated behaviours confirmed working — see below. |
 | 2. Pure logic + fixture tests | **Done** (`309f7ed`..`5eca2ed`) | 52 tests green, incl. 122 differential cases vs Python |
 | 3. State machine + recovery tests | **Done** (`e11af6a`..`HEAD`) | 104 tests green; all 11 scenario groups ported |
 | 4. Real adapters | Next | End-to-end dictation into TextEdit |
@@ -112,18 +125,39 @@ the two abandonment tests and nothing else.
 - Plan §7 wants the model-name mapping resolved at build time and any key
   without a WhisperKit equivalent greyed out rather than silently missing.
 
-## Outstanding: needs Sam
+## Phase 1 gate: verified 2026-08-14
 
-Phase 1's gate is not fully closed. `CGEvent.tapCreate` succeeds under the
-sandbox (proven — see the log line `key tap: installed for shift_r`), but a
-tap can install and still deliver nothing until Input Monitoring is granted,
-so the two TCC-gated behaviours need a human to grant and exercise:
+The APP_STORE.md §1 thesis holds. A sandboxed app can do both halves:
 
-1. Grant **Input Monitoring** to `OpenWhisperSwift.app`, then hold Right
-   Shift and confirm `trigger shift_r DOWN` / `UP` lines appear in the log.
-2. Grant **Accessibility** (PostEvent), then use the menu's
-   *Type "hello from swift"* item with a text field focused — it waits 3s so
-   you can focus the target app.
+```
+input monitoring: true, post event: true
+key tap: installed for shift_r
+typed test string          <- PostEvent into another app
+trigger shift_r DOWN / UP  <- Input Monitoring on the trigger key
+```
 
-Both grants are per-signature; they survive rebuilds as long as the
-"Open Whisper Dev" identity is used.
+### Granting these on a fresh machine
+
+Two *separate* TCC records, in two different System Settings panes. Both need
+the app added by hand with the `+` button, because it lives in `swift/build/`
+rather than `/Applications` (use ⌘⇧G in the file picker to type the path):
+
+- **Privacy & Security -> Accessibility** — PostEvent, i.e. typing text.
+- **Privacy & Security -> Input Monitoring** — reading the trigger key.
+
+Then **quit and relaunch**: an already-installed event tap does not pick up a
+new grant, so the running process stays deaf even after the switches flip.
+
+Grants key on the code signature, so rebuilds do not void them even though
+`build-app.sh` deletes and recreates the bundle — that is why the local
+"Open Whisper Dev" identity is reused. Moving the bundle to a different path
+*does* create a fresh entry, so move it before granting rather than after.
+
+### Diagnostic worth remembering
+
+Without the Input Monitoring grant, `CGEvent.tapCreate` still **succeeds** and
+the tap installs — it simply delivers nothing. The visible symptom was a
+stream of `key tap: re-enabled after disable-by-user input` lines with no
+`trigger ... DOWN` ever appearing. That stopped the moment the grant landed.
+So a repeating disable-by-user-input with no key events is a missing grant,
+not a slow callback.
