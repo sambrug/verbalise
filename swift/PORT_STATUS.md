@@ -72,6 +72,39 @@ anyone who prefers to work in the IDE.
 All six phases are implemented. What remains is verification, not code: the
 plan §11 checklist below has only been partly exercised.
 
+## After the plan
+
+**Settings moved into a window** (2026-08-14), which the plan did not call for.
+Seven panes in a System Settings-style sidebar, replacing the menu's `Settings ▸`
+submenu and absorbing the onboarding window as its Permissions pane. Built to a
+mockup Sam approved first.
+
+The pieces worth knowing:
+
+| File | Holds |
+|---|---|
+| `OpenWhisperCore/ModelCatalog.swift` | The Speech model list's state table. Pure, 15 tests. |
+| `OpenWhisperCore/PhoneticText.swift` | The two editable text formats, 11 tests. |
+| `OpenWhisperSpeech/ModelDownloader.swift` | Downloads a tier without switching to it. Cancellable. |
+| `OpenWhisperSwift/SettingsWindow.swift` | The window, the panes enum, the bridge to the app. |
+| `OpenWhisperSwift/SettingsPanes.swift` | The SwiftUI views. |
+
+`OnboardingWindow.swift` and `TextEditorWindow` are **deleted** — both were
+replaced by panes. SwiftUI rather than AppKit here (the second place after the
+pill): the grouped-inset list and the sidebar are stock controls in SwiftUI and
+hand-built ones in AppKit, and matching macOS is the whole point of the window.
+
+**Download and selection are deliberately separate.** A tier can be fetched
+while dictation carries on with the current one, and a fetch can be cancelled.
+`ModelCatalog` merges two sources of "downloading" — explicit fetches from the
+window, and the implicit one the engine starts when the configured model is
+missing — so a model fetched on the way to a dictation appears in the list as a
+download rather than as simply missing.
+
+```bash
+./build/OpenWhisperSwift.app/Contents/MacOS/OpenWhisperSwift --settings
+```
+
 ## Outstanding
 
 Two items, both recorded against the plan's own §11 checklist:
@@ -79,7 +112,10 @@ Two items, both recorded against the plan's own §11 checklist:
 1. **Yank a Bluetooth mic mid-recording.** The recovery machinery has coverage
    against fakes for all 11 scenario groups and none against real hardware.
 2. **Run the Python import successfully.** The mechanism is fixed and tested;
-   it has not yet completed end to end.
+   it has not yet completed end to end. Now at Settings ▸ General.
+3. **Click through the Settings window.** New as of 2026-08-14. Specifically:
+   a model downloading with visible progress and a working Cancel, and the
+   Permissions pane ticking over live as a grant is made in System Settings.
 
 Everything else on §11 is ticked.
 

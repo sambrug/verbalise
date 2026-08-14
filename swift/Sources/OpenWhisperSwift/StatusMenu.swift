@@ -1,6 +1,5 @@
 import AppKit
 import OpenWhisperCore
-import ServiceManagement
 
 /// The menu bar item and its tree (menubar.py:719-960 is the spec).
 ///
@@ -8,16 +7,13 @@ import ServiceManagement
 /// the delegate is meant to stay a wiring layer.
 @MainActor
 protocol StatusMenuDelegate: AnyObject {
-    var currentSettings: Settings { get }
     var currentStats: UsageStats { get }
     var currentRecent: [RecentTranscript] { get }
     var lastTranscript: String? { get }
 
-    func apply(settings: Settings)
     func clearRecentTranscripts()
+    func showSettings()
     func restart()
-    func openConfigFile()
-    func importFromPythonApp()
 }
 
 @MainActor
@@ -32,7 +28,6 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     private let statsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let timeSavedItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let recentMenu = NSMenu()
-    private let settingsMenu = NSMenu()
 
     /// Persistent alert shown as a scrolling line (menubar.py:1022). Cleared
     /// when the next dictation succeeds.
@@ -92,12 +87,11 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        // Everything configurable lives behind Settings. Only what you act on
-        // in the moment — state, the last transcript, Restart, Quit — stays at
-        // the top level.
-        let settingsItem = NSMenuItem(title: "Settings", action: nil, keyEquivalent: "")
-        settingsItem.submenu = settingsMenu
-        menu.addItem(settingsItem)
+        // Everything configurable lives in the Settings window. Only what you
+        // act on in the moment — state, the last transcript, Restart, Quit —
+        // stays here. A submenu could not show a model downloading, could not
+        // hold the permission rows, and made every toggle a four-level hover.
+        add(to: menu, title: "Settings…", action: #selector(showSettings), key: ",")
 
         menu.addItem(.separator())
 
@@ -128,7 +122,6 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         rebuildRecent()
-        rebuildSettings()
         refreshStatsLines()
     }
 
@@ -243,118 +236,6 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         recentMenu.addItem(clear)
     }
 
-    // MARK: - Settings submenu
-
-    private func rebuildSettings() {
-        settingsMenu.removeAllItems()
-        guard let delegate else { return }
-        let settings = delegate.currentSettings
-
-        // Trigger key. Combos are listed as well as single keys — a lone
-        // modifier is easy to hit by accident mid-typing, and the config has
-        // always accepted pairs.
-        let triggerMenu = NSMenu()
-        var addedSeparator = false
-        for combo in TriggerCombo.pickerOptions(including: settings.triggerCombo) {
-            if combo.keys.count > 1, !addedSeparator {
-                triggerMenu.addItem(.separator())
-                addedSeparator = true
-            }
-            let item = NSMenuItem(
-                title: combo.displayName, action: #selector(pickTriggerKey(_:)), keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = combo.configValue
-            item.state = settings.triggerKey == combo.configValue ? .on : .off
-            triggerMenu.addItem(item)
-        }
-        addSubmenu(to: settingsMenu, title: "Trigger Key", submenu: triggerMenu)
-
-        // Model
-        let modelMenu = NSMenu()
-        for model in TranscriptionModel.allCases {
-            let item = NSMenuItem(
-                title: "\(model.displayName) — \(model.approximateDownloadSize)",
-                action: #selector(pickModel(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = model.rawValue
-            item.state = settings.transcriptionModel == model ? .on : .off
-            item.toolTip = model.summary
-            modelMenu.addItem(item)
-        }
-        addSubmenu(to: settingsMenu, title: "Transcription Model", submenu: modelMenu)
-
-        // Input device
-        let deviceMenu = NSMenu()
-        let systemDefault = NSMenuItem(
-            title: "System Default", action: #selector(pickInputDevice(_:)), keyEquivalent: ""
-        )
-        systemDefault.target = self
-        systemDefault.representedObject = ""
-        systemDefault.state = settings.inputDevice == nil ? .on : .off
-        deviceMenu.addItem(systemDefault)
-        deviceMenu.addItem(.separator())
-        for device in AudioDevices.inputDevices() {
-            let item = NSMenuItem(
-                title: device.name, action: #selector(pickInputDevice(_:)), keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = device.name
-            item.state = settings.inputDevice == device.name ? .on : .off
-            deviceMenu.addItem(item)
-        }
-        addSubmenu(to: settingsMenu, title: "Input Device", submenu: deviceMenu)
-
-        settingsMenu.addItem(.separator())
-
-        // Two states, so a checkbox rather than a submenu of one real choice.
-        addToggle(title: "Recording Overlay",
-                  on: settings.overlayStyle == .on,
-                  action: #selector(toggleOverlay))
-        addToggle(title: "Streaming Transcribe",
-                  on: settings.advanced.streamingTranscribeEnabled,
-                  action: #selector(toggleStreaming))
-        addToggle(title: "Fast Typing",
-                  on: settings.advanced.fastTypingEnabled,
-                  action: #selector(toggleFastTyping))
-        addToggle(title: "Trim Silence",
-                  on: settings.advanced.trimSilenceEnabled,
-                  action: #selector(toggleTrimSilence))
-        addToggle(title: "Sound Feedback",
-                  on: settings.soundEnabled,
-                  action: #selector(toggleSound))
-
-        settingsMenu.addItem(.separator())
-
-        add(to: settingsMenu, title: "Vocabulary…", action: #selector(editVocabulary))
-        add(to: settingsMenu, title: "Phonetic Corrections…", action: #selector(editPhonetic))
-
-        settingsMenu.addItem(.separator())
-
-        let login = add(to: settingsMenu, title: "Launch at Login",
-                        action: #selector(toggleLoginItem))
-        login.state = SMAppService.mainApp.status == .enabled ? .on : .off
-
-        add(to: settingsMenu, title: "Permissions…", action: #selector(showPermissions))
-        add(to: settingsMenu, title: "Open Config", action: #selector(openConfig))
-        add(to: settingsMenu, title: "View Logs", action: #selector(viewLogs))
-        add(to: settingsMenu, title: "Import from Open Whisper (Python)…",
-            action: #selector(importFromPython))
-    }
-
-    private func addSubmenu(to menu: NSMenu, title: String, submenu: NSMenu) {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        item.submenu = submenu
-        menu.addItem(item)
-    }
-
-    private func addToggle(title: String, on: Bool, action: Selector) {
-        let item = add(to: settingsMenu, title: title, action: action)
-        item.state = on ? .on : .off
-    }
-
     private func refreshStatsLines() {
         let stats = delegate?.currentStats ?? UsageStats()
         statsItem.title = StatsFormatter.formatStats(stats)
@@ -366,106 +247,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         }
     }
 
-    // MARK: - Login item
-
-    @objc private func toggleLoginItem() {
-        do {
-            if SMAppService.mainApp.status == .enabled {
-                try SMAppService.mainApp.unregister()
-            } else {
-                try SMAppService.mainApp.register()
-            }
-        } catch {
-            log("login item: \(error.localizedDescription)")
-            show(alert: "Could not change Launch at Login: \(error.localizedDescription)")
-        }
-    }
-
     // MARK: - Actions
-
-    private func mutate(_ change: (inout Settings) -> Void) {
-        guard let delegate else { return }
-        var settings = delegate.currentSettings
-        change(&settings)
-        delegate.apply(settings: settings)
-    }
-
-    @objc private func pickTriggerKey(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String else { return }
-        mutate { $0.triggerKey = raw }
-    }
-
-    @objc private func pickModel(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let model = TranscriptionModel(rawValue: raw) else { return }
-        mutate { $0.transcriptionModel = model }
-    }
-
-    @objc private func pickInputDevice(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
-        mutate { $0.inputDevice = name.isEmpty ? nil : name }
-    }
-
-    @objc private func toggleOverlay() {
-        mutate { $0.overlayStyle = $0.overlayStyle == .on ? .off : .on }
-    }
-
-    @objc private func toggleStreaming() {
-        mutate { $0.advanced.streamingTranscribeEnabled.toggle() }
-    }
-
-    @objc private func toggleFastTyping() {
-        mutate { $0.advanced.fastTypingEnabled.toggle() }
-    }
-
-    @objc private func toggleTrimSilence() {
-        mutate { $0.advanced.trimSilenceEnabled.toggle() }
-    }
-
-    @objc private func toggleSound() {
-        mutate { $0.soundEnabled.toggle() }
-    }
-
-    @objc private func editVocabulary() {
-        guard let delegate else { return }
-        TextEditorWindow.show(
-            title: "Vocabulary",
-            help: "Domain terms Whisper should favour — names, acronyms, jargon. One per line.",
-            text: delegate.currentSettings.vocabulary.joined(separator: "\n")
-        ) { [weak self] text in
-            self?.mutate {
-                $0.vocabulary = text
-                    .split(separator: "\n")
-                    .map { $0.trimmingCharacters(in: .whitespaces) }
-                    .filter { !$0.isEmpty }
-            }
-        }
-    }
-
-    @objc private func editPhonetic() {
-        guard let delegate else { return }
-        let existing = delegate.currentSettings.orderedPhoneticCorrections
-            .map { "\($0.misheard): \($0.correct)" }
-            .joined(separator: "\n")
-
-        TextEditorWindow.show(
-            title: "Phonetic Corrections",
-            help: "Stubborn mishearings, replaced whole-word after transcription. "
-                + "One per line as  misheard: correct  — for example  ethanol: FNOL",
-            text: existing
-        ) { [weak self] text in
-            var corrections: [String: String] = [:]
-            for line in text.split(separator: "\n") {
-                let parts = line.split(separator: ":", maxSplits: 1)
-                guard parts.count == 2 else { continue }
-                let key = parts[0].trimmingCharacters(in: .whitespaces)
-                let value = parts[1].trimmingCharacters(in: .whitespaces)
-                guard !key.isEmpty, !value.isEmpty else { continue }
-                corrections[key] = value
-            }
-            self?.mutate { $0.phoneticCorrections = corrections }
-        }
-    }
 
     @objc private func copyLast() {
         guard let text = delegate?.lastTranscript else { return }
@@ -481,20 +263,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         delegate?.clearRecentTranscripts()
     }
 
-    @objc private func openConfig() {
-        delegate?.openConfigFile()
-    }
-
-    @objc private func viewLogs() {
-        LogWindow.show()
-    }
-
-    @objc private func importFromPython() {
-        delegate?.importFromPythonApp()
-    }
-
-    @objc private func showPermissions() {
-        OnboardingWindow.show()
+    @objc private func showSettings() {
+        delegate?.showSettings()
     }
 
     @objc private func restart() {

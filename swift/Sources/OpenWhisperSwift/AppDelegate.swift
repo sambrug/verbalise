@@ -23,6 +23,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var session: AudioSession?
     private var engine: TranscriptionEngine?
 
+    /// Fetches tiers the user asked for but is not using yet. Separate from the
+    /// engine, which downloads only what it needs to transcribe right now.
+    private lazy var downloader = ModelDownloader { inFlight in
+        Task { @MainActor in
+            AppDelegate.shared?.cachedDownloads = inFlight
+            SettingsWindow.refreshIfOpen()
+        }
+    }
+    private var cachedDownloads: [TranscriptionModel: Double?] = [:]
+
     private var cachedStats = UsageStats()
     private var cachedRecent: [RecentTranscript] = []
     private(set) var lastTranscript: String?
@@ -41,9 +51,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         loadStats()
 
         // Before anything else the user might try. Without a granted trigger
-        // key the app is silently inert, which is exactly the confusion this
-        // window exists to prevent.
-        OnboardingWindow.showIfNeeded()
+        // key the app is silently inert, which is exactly the confusion the
+        // Permissions pane exists to prevent.
+        if CommandLine.arguments.contains("--settings") {
+            // A menu bar app's Settings window is otherwise three clicks and a
+            // menu-bar hover away, which is tedious when checking a layout and
+            // impossible from a script.
+            showSettings()
+        } else {
+            SettingsWindow.showIfPermissionsMissing(delegate: self)
+        }
 
         // Pay CoreAudio's first-activation cost now, while nobody is waiting,
         // rather than on the user's first keypress.
@@ -300,6 +317,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .ready, .idle:
             break
         }
+        // The engine downloads too, and the Settings window must show that as
+        // one download rather than none -- otherwise a model fetched on the way
+        // to a dictation appears in the list as simply missing.
+        SettingsWindow.refreshIfOpen()
     }
 }
 
@@ -307,9 +328,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension AppDelegate: StatusMenuDelegate {
 
-    var currentSettings: Settings { settings }
     var currentStats: UsageStats { cachedStats }
     var currentRecent: [RecentTranscript] { cachedRecent }
+
+    func showSettings() {
+        SettingsWindow.show(delegate: self)
+    }
+}
+
+// MARK: - SettingsDelegate
+
+extension AppDelegate: SettingsDelegate {
+
+    var currentSettings: Settings { settings }
+
+    /// Which tiers are on disk. Asked fresh rather than cached: a download that
+    /// finished a second ago must show as available, and the answer is a
+    /// filesystem check on three paths.
+    var downloadedModels: Set<TranscriptionModel> {
+        TranscriptionEngine.downloadedModels
+    }
+
+    /// In-flight downloads from both sources — the explicit ones the user
+    /// started in the window, and the implicit one the engine starts when the
+    /// configured model is missing.
+    var modelDownloads: [TranscriptionModel: Double?] {
+        var all = cachedDownloads
+        if case .downloading(let fraction) = enginePhase {
+            all.updateValue(fraction, forKey: settings.transcriptionModel)
+        }
+        return all
+    }
+
+    func downloadModel(_ model: TranscriptionModel) {
+        Task { await downloader.start(model) }
+    }
+
+    func cancelModelDownload(_ model: TranscriptionModel) {
+        Task { await downloader.cancel(model) }
+    }
+
+    func showLog() {
+        LogWindow.show()
+    }
 
     /// Applies a settings change live, rebuilding only what actually depends on
     /// what changed (the Python did this on SIGHUP, daemon.py:904).

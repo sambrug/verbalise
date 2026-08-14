@@ -96,9 +96,13 @@ so existing configs keep working.
 |---|---|---|
 | `fast` | `openai_whisper-small_216MB` | ~216 MB |
 | `balanced` (default, bundled) | `openai_whisper-large-v3_turbo_954MB` | ~954 MB |
-| `accurate` | `openai_whisper-large-v3` | ~3 GB |
+| `accurate` | `openai_whisper-large-v3` | ~3.0 GB |
 
-Only `balanced` ships inside the app; the others download on demand. Development
+Only `balanced` ships inside the app; the others download on demand. Settings ▸
+Speech model shows all three at once with their real state — in use, ready,
+downloading with progress, or not downloaded — and downloading is separate from
+selecting, so a tier can be fetched in the background while dictation carries
+on with the current one. Development
 builds skip the staging step entirely and download on first use, which keeps the
 rebuild loop fast. Before a release or App Store archive:
 
@@ -118,12 +122,31 @@ BIN=build/OpenWhisperSwift.app/Contents/MacOS/OpenWhisperSwift
 $BIN --list-devices                    # what CoreAudio can see, and the default
 $BIN --warm-model                      # download + load the configured model
 $BIN --test-capture --prewarm-first    # exercise the audio path, no keypress
+$BIN --settings                        # launch with the Settings window open
 ```
 
 `--list-devices` answers the first question when a configured microphone stops
 working. `--test-capture` exists because a crash in the audio path leaves a
 report with no exception message; a reproducer that prints its own failure beats
-reading code.
+reading code. `--settings` exists because a menu bar app's Settings window is
+otherwise a menu-bar hover away, which no script can do.
+
+## The Settings window
+
+Configuration lives in a window (⌘, from the menu), not in the menu itself —
+seven panes in a sidebar, matching System Settings. The Python app put every
+setting in the menu bar, which meant nothing could show progress, the permission
+rows needed a second window of their own, and each toggle was a four-level
+hover.
+
+The status menu is now only what you act on in the moment: state, the last
+transcript, Recent, Settings…, the lifetime counters, Restart, Quit.
+
+`ModelCatalog` (in `OpenWhisperCore`) derives the Speech model list from four
+independent signals — selected, on disk, downloading, progress known. It is pure
+and tested apart from the window, because the combinations that matter are the
+ones a screenshot never shows you: a model selected while it is still
+downloading must not claim to be in use.
 
 ## Where state lives
 
@@ -161,6 +184,8 @@ Beyond plan §10's accepted list:
   audio buffer; here a `LevelMeter` decouples the audio thread from the
   animation, which samples at a fixed 20Hz. Buffer arrival is neither regular
   nor a rate the animation should inherit.
+- **Settings live in a window, not the menu** (above). This also absorbed the
+  separate onboarding window: the permission rows are now a pane.
 - **Config is JSON**, not YAML (plan §10 permits this). Same keys, same
   defaults.
 - **Phonetic corrections apply in sorted-key order.** Python uses dict insertion
