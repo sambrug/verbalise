@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: DictationController?
     private var session: AudioSession?
     private var engine: TranscriptionEngine?
+    private var pill: OverlayPill?
 
     private var statusLine = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
     private var lastTranscript: String?
@@ -63,6 +64,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func buildStack() {
+        pill = OverlayPill(style: settings.overlayStyle)
+
         // Audio samples arrive on a realtime thread. They are handed straight
         // to the controller actor and nothing else happens here — the tap must
         // never block.
@@ -71,6 +74,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             deviceName: settings.inputDevice,
             onSamples: { [weak self] samples in
                 Task { await self?.controller?.appendAudio(samples) }
+            },
+            onLevel: { level in
+                // Feeds the pill's bars. The original fed these at ~10Hz over
+                // the JSON protocol; in-process it is one hop to the main
+                // actor per buffer.
+                Task { @MainActor in
+                    AppDelegate.shared?.pill?.push(level: Double(level))
+                }
             }
         )
 
@@ -173,8 +184,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .error(let message):
             refreshStatus(message)
             log("error: \(message)")
-        case .pill, .statsChanged:
-            break // Phase 5.
+        case .pill(let command):
+            switch command {
+            case .show(let state): pill?.show(state: state)
+            case .setState(let state): pill?.set(state: state)
+            case .hide: pill?.hide()
+            }
+        case .statsChanged:
+            break // Stats persistence lands with the rest of the menu.
         }
     }
 
