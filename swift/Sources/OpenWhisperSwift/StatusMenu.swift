@@ -48,10 +48,16 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
         // Deliberately not the Python app's icon (menubar.py:334) so the two
         // are tellable apart at a glance while both are installed.
-        statusItem.button?.image = NSImage(
+        //
+        // The point size matters: an SF Symbol at its default size renders
+        // noticeably smaller than the system's own menu bar glyphs, which made
+        // it look shrunken next to them. 16pt matches their optical weight.
+        let configuration = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
+        let icon = NSImage(
             systemSymbolName: "waveform", accessibilityDescription: "Open Whisper Swift"
-        )
-        statusItem.button?.image?.isTemplate = true
+        )?.withSymbolConfiguration(configuration)
+        icon?.isTemplate = true
+        statusItem.button?.image = icon
 
         build()
     }
@@ -293,23 +299,12 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         }
         addSubmenu(to: settingsMenu, title: "Input Device", submenu: deviceMenu)
 
-        // Overlay style
-        let overlayMenu = NSMenu()
-        for style in OverlayStyle.allCases {
-            let item = NSMenuItem(
-                title: style.rawValue.capitalized,
-                action: #selector(pickOverlayStyle(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = style.rawValue
-            item.state = settings.overlayStyle == style ? .on : .off
-            overlayMenu.addItem(item)
-        }
-        addSubmenu(to: settingsMenu, title: "Overlay Style", submenu: overlayMenu)
-
         settingsMenu.addItem(.separator())
 
+        // Two states, so a checkbox rather than a submenu of one real choice.
+        addToggle(title: "Recording Overlay",
+                  on: settings.overlayStyle == .on,
+                  action: #selector(toggleOverlay))
         addToggle(title: "Streaming Transcribe",
                   on: settings.advanced.streamingTranscribeEnabled,
                   action: #selector(toggleStreaming))
@@ -400,10 +395,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         mutate { $0.inputDevice = name.isEmpty ? nil : name }
     }
 
-    @objc private func pickOverlayStyle(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let style = OverlayStyle(rawValue: raw) else { return }
-        mutate { $0.overlayStyle = style }
+    @objc private func toggleOverlay() {
+        mutate { $0.overlayStyle = $0.overlayStyle == .on ? .off : .on }
     }
 
     @objc private func toggleStreaming() {

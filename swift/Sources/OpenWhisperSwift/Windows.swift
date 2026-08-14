@@ -45,11 +45,10 @@ final class TextEditorWindow: NSObject, NSWindowDelegate {
         window.title = title
         window.isReleasedWhenClosed = false
 
-        let helpLabel = NSTextField(labelWithString: help)
+        let helpLabel = NSTextField(wrappingLabelWithString: help)
         helpLabel.font = .systemFont(ofSize: 11)
         helpLabel.textColor = .secondaryLabelColor
-        helpLabel.lineBreakMode = .byWordWrapping
-        helpLabel.preferredMaxLayoutWidth = 480
+        helpLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
@@ -78,24 +77,42 @@ final class TextEditorWindow: NSObject, NSWindowDelegate {
         cancel.target = self
         cancel.action = #selector(cancelTapped)
 
-        let buttons = NSStackView(views: [cancel, save])
+        save.controlSize = .large
+        cancel.controlSize = .large
+
+        // Cancel then Save at the trailing edge, which is where macOS puts
+        // them, with a flexible spacer doing the pushing.
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let buttons = NSStackView(views: [spacer, cancel, save])
         buttons.orientation = .horizontal
         buttons.spacing = 12
+        buttons.setContentHuggingPriority(.required, for: .vertical)
 
         let stack = NSStackView(views: [helpLabel, scroll, buttons])
         stack.orientation = .vertical
+        stack.alignment = .leading
         stack.spacing = 12
-        stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
-        stack.setHuggingPriority(.defaultHigh, for: .vertical)
-        buttons.setContentHuggingPriority(.defaultHigh, for: .vertical)
+        // 20pt standard macOS window margin, matching the other windows.
+        stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        window.contentView = stack
+        let content = NSView()
+        content.addSubview(stack)
+        window.contentView = content
+
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: window.contentView!.bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: content.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            // The scroll view and button row span the full width; without
+            // this a leading-aligned stack sizes them to their content and
+            // leaves a gap down the right-hand side.
+            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40),
+            buttons.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40),
+            helpLabel.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40),
         ])
         window.delegate = self
         window.initialFirstResponder = textView

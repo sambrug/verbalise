@@ -73,8 +73,35 @@ public enum TranscriptionModel: String, CaseIterable, Codable, Sendable {
     }
 }
 
+/// Whether the floating pill is shown.
+///
+/// The Python offered three styles; the opaque `solid` capsule existed as a
+/// fallback for macOS versions without Liquid Glass, and with a macOS 14 floor
+/// and Tahoe's glass available it is just a worse-looking duplicate. Two states
+/// is the honest set.
+///
+/// Old configs naming `translucent` or `solid` still load, both meaning on —
+/// neither should leave a user with no pill and no explanation.
 public enum OverlayStyle: String, CaseIterable, Codable, Sendable {
-    case translucent, solid, off
+    case on
+    case off
+
+    public var displayName: String {
+        self == .on ? "On" : "Off"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        switch raw {
+        case "on", "translucent", "solid": self = .on
+        case "off": self = .off
+        default:
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Unknown overlay_style '\(raw)'"
+            ))
+        }
+    }
 }
 
 /// The `advanced:` block of config.example.yaml.
@@ -127,7 +154,7 @@ public struct Settings: Codable, Equatable, Sendable {
     public var releaseDelay: Double = 0.05
     public var sampleRate: Int = 16000
     public var soundEnabled: Bool = false
-    public var overlayStyle: OverlayStyle = .translucent
+    public var overlayStyle: OverlayStyle = .on
     public var vocabulary: [String] = []
     public var phoneticCorrections: [String: String] = [:]
     public var inputDevice: String?

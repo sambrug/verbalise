@@ -217,14 +217,13 @@ struct VisualEffectView: NSViewRepresentable {
 
 struct OverlayContentView: View {
     @ObservedObject var model: OverlayModel
-    let translucent: Bool
 
     private let cyan = Color(red: 10 / 255, green: 170 / 255, blue: 210 / 255)
     private let iconWidth: CGFloat = 20
     private let timerWidth: CGFloat = 38
 
     var body: some View {
-        let iconColor: Color = translucent ? .primary : .white
+        let iconColor: Color = .primary
 
         // Pin the HStack content to a fixed width so the pill does not
         // change size between states. Both states have content width 174:
@@ -269,28 +268,30 @@ struct OverlayContentView: View {
         .animation(.easeInOut(duration: 0.45), value: isRecording)
 
         Group {
-            if translucent {
-                if #available(macOS 26.0, *) {
-                    // Pure clear glass — no cyan tint. Lets the Liquid Glass
-                    // refraction read clearly. The cyan brand colour comes
-                    // through the icon and the recording dot.
-                    pill.glassEffect(.regular, in: .capsule)
-                } else {
-                    pill.background(
-                        ZStack {
-                            VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
-                                .clipShape(Capsule())
-                            Capsule().fill(cyan.opacity(0.4))
-                        }
-                        .overlay(Capsule().strokeBorder(.white.opacity(0.18), lineWidth: 0.5))
-                        .shadow(color: .black.opacity(0.3), radius: 8, y: 2)
-                    )
+            if #available(macOS 26.0, *) {
+                // Pure clear glass — no cyan tint. Lets the Liquid Glass
+                // refraction read clearly. The cyan brand colour comes
+                // through the icon and the recording dot.
+                //
+                // `.interactive()` adds the responsive light play that makes
+                // the material read as glass rather than as a blur, and the
+                // GlassEffectContainer is what lets the system render it as a
+                // single continuous surface — without the container each glass
+                // view is sampled independently and the effect flattens.
+                GlassEffectContainer {
+                    pill.glassEffect(.regular.interactive(), in: .capsule)
                 }
             } else {
+                // macOS 14/15 have no Liquid Glass; this is the closest the
+                // older material stack gets.
                 pill.background(
-                    Capsule()
-                        .fill(cyan)
-                        .shadow(color: .black.opacity(0.3), radius: 8, y: 2)
+                    ZStack {
+                        VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
+                            .clipShape(Capsule())
+                        Capsule().fill(cyan.opacity(0.4))
+                    }
+                    .overlay(Capsule().strokeBorder(.white.opacity(0.18), lineWidth: 0.5))
+                    .shadow(color: .black.opacity(0.3), radius: 8, y: 2)
                 )
             }
         }
@@ -377,9 +378,7 @@ final class OverlayPill {
     private func makePanelIfNeeded() {
         guard panel == nil, style != .off else { return }
 
-        let view = TransparentHostingView(
-            rootView: OverlayContentView(model: model, translucent: style == .translucent)
-        )
+        let view = TransparentHostingView(rootView: OverlayContentView(model: model))
         view.frame = NSRect(x: 0, y: 0, width: 320, height: 48)
         view.wantsLayer = true
         view.layer?.isOpaque = false

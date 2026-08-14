@@ -16,7 +16,7 @@ struct SettingsTests {
         #expect(s.releaseDelay == 0.05)
         #expect(s.sampleRate == 16000)
         #expect(s.soundEnabled == false)
-        #expect(s.overlayStyle == .translucent)
+        #expect(s.overlayStyle == .on)
         #expect(s.vocabulary.isEmpty)
         #expect(s.phoneticCorrections.isEmpty)
         #expect(s.inputDevice == nil)
@@ -59,6 +59,33 @@ struct SettingsTests {
         #expect(s.advanced.trimSilenceEnabled == true)
     }
 
+    @Test("Old overlay_style values still load")
+    func legacyOverlayStyles() throws {
+        // The opaque `solid` capsule is gone — it existed as a fallback for
+        // macOS without Liquid Glass and is now just a worse duplicate. A
+        // config naming it must still load rather than leaving the user with
+        // no pill and no explanation.
+        for raw in ["translucent", "solid", "on"] {
+            let json = Data(#"{"overlay_style":"\#(raw)"}"#.utf8)
+            let s = try JSONDecoder().decode(Settings.self, from: json)
+            #expect(s.overlayStyle == .on, "\(raw) should mean on")
+        }
+
+        let off = try JSONDecoder().decode(
+            Settings.self, from: Data(#"{"overlay_style":"off"}"#.utf8)
+        )
+        #expect(off.overlayStyle == .off)
+    }
+
+    @Test("An unknown overlay_style is rejected rather than silently defaulted")
+    func unknownOverlayStyleRejected() {
+        #expect(throws: (any Error).self) {
+            try JSONDecoder().decode(
+                Settings.self, from: Data(#"{"overlay_style":"neon"}"#.utf8)
+            )
+        }
+    }
+
     @Test("Settings round-trip through JSON")
     func roundTrip() throws {
         var s = Settings()
@@ -67,7 +94,7 @@ struct SettingsTests {
         s.vocabulary = ["FNOL", "Kubernetes"]
         s.phoneticCorrections = ["ethanol": "FNOL"]
         s.inputDevice = "MacBook Pro Microphone"
-        s.overlayStyle = .solid
+        s.overlayStyle = .off
 
         let data = try JSONEncoder().encode(s)
         #expect(try JSONDecoder().decode(Settings.self, from: data) == s)
