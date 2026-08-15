@@ -536,6 +536,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // broke the menu's pattern, the other the pill's shape.)
             if !TranscriptionEngine.isPrepared(activeModel) {
                 log("dictation: refused, the speech model isn't ready")
+                // The one addition at the keypress itself: the refusal sound,
+                // so "not ready yet" is tellable from "broken" without
+                // touching the pill.
+                if settings.soundEnabled { Sounds.playUnavailable() }
                 // Make sure the missing work is actually underway. Joins
                 // whatever is already running; a repeat press cannot start
                 // anything twice.
