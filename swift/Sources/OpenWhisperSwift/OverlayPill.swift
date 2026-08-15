@@ -32,10 +32,11 @@ import SwiftUI
 /// what it already relied on -- now stated rather than assumed.
 @MainActor
 final class OverlayModel: ObservableObject {
-    static let barCount = 20
+    static let barCount = 21
 
     @Published var currentState = "recording"
-    @Published var levels: [CGFloat] = Array(repeating: 0.02, count: barCount)
+    @Published var levels: [CGFloat] =
+        Array(repeating: CGFloat(LevelScaler.minimumHeight), count: barCount)
     @Published var visible = false
     @Published var elapsedSeconds: Int = 0
 
@@ -86,16 +87,23 @@ final class OverlayModel: ObservableObject {
         return String(format: "%d:%02d", mm, ss)
     }
 
+    /// Adapts the bar heights to how loudly the user happens to be speaking.
+    /// See `LevelScaler`; it replaced a fixed multiplier that only looked right
+    /// at one volume.
+    private var scaler = LevelScaler()
+
     func pushLevel(_ value: CGFloat) {
-        let clamped = min(max(value * 8, 0.02), 1.0)
-        levels.append(clamped)
+        levels.append(CGFloat(scaler.scale(Double(value))))
         if levels.count > Self.barCount {
             levels.removeFirst()
         }
     }
 
     func resetLevels() {
-        levels = Array(repeating: 0.02, count: Self.barCount)
+        // The scale is per-dictation: whatever the last one was spoken at
+        // should not decide how the next one starts out.
+        scaler.reset()
+        levels = Array(repeating: CGFloat(LevelScaler.minimumHeight), count: Self.barCount)
     }
 
     func startTimer() {
@@ -132,24 +140,28 @@ final class OverlayModel: ObservableObject {
 struct PillBarsView: View {
     @ObservedObject var model: OverlayModel
 
-    static let recordingBars = 20
+    static let recordingBars = 21
     static let restingBars = 28
     static let barMaxHeight: CGFloat = 20
     static let barWidth: CGFloat = 3
     static let barSpacing: CGFloat = 2
 
-    // Frame widths chosen so the pill is the SAME total width in both
-    // states. The natural bar-content widths (98 and 138) differ by 40pt;
-    // the timer slot is 38pt. Bumping the recording frame by 2pt of trailing
-    // slack closes that 2pt gap, so:
-    //   recording: icon(20) + 10 + timer(38) + 10 + bars(100) = 178pt
+    // Frame widths chosen so the pill is the SAME total width in both states,
+    // which is what stops the panel resizing mid-session:
+    //   recording: icon(20) + 10 + timer(35) + 10 + bars(103) = 178pt
     //   resting:   icon(20) + 10 + timer( 0) + 10 + bars(138) = 178pt
-    // Identical pill widths means no panel resize is needed mid-session.
+    //
+    // The timer slot was 38pt against text that measures about 26, so ten-odd
+    // points of it were empty and sat between the numbers and the first bar --
+    // a gap twice the width of the one on the other side of the numbers. Three
+    // of those points went to a 21st bar, which closes the difference and keeps
+    // the two totals equal. Any further trimming has to move between these two
+    // numbers, not out of one of them.
     //
     // The two 10s are the HStack spacing in OverlayContentView, written out
     // again in pinnedContentWidth. Change the spacing and both have to move,
     // or the pill's declared width stops matching what is inside it.
-    static let recordingWidth: CGFloat = 100
+    static let recordingWidth: CGFloat = 103
     static var restingWidth: CGFloat {
         CGFloat(restingBars) * barWidth + CGFloat(restingBars - 1) * barSpacing
     }
@@ -271,7 +283,7 @@ struct OverlayContentView: View {
     )
 
     private let iconWidth: CGFloat = 20
-    private let timerWidth: CGFloat = 38
+    private let timerWidth: CGFloat = 35
 
     var body: some View {
         let iconColor: Color = .primary
