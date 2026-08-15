@@ -38,8 +38,39 @@ cp Resources/Info.plist "$BUNDLE/Contents/Info.plist"
 
 cp "Resources/PrivacyInfo.xcprivacy" "$BUNDLE/Contents/Resources/PrivacyInfo.xcprivacy"
 
-if [ -f "$REPO_ROOT/assets/AppIcon.icns" ]; then
+# The app icon.
+#
+# Resources/AppIcon.icon is an Icon Composer bundle -- layered SVGs, a gradient
+# and a translucency setting, which macOS 26 renders as a Liquid Glass icon.
+# It is not a file that can be copied: actool compiles it, and usefully emits
+# both an Assets.car for macOS 26 and a plain .icns for 14 and 15, so one
+# source covers the whole deployment range.
+#
+# actool ships with Xcode. Without Xcode the build still works and falls back
+# to the flat icon the Python app uses, so Command Line Tools remain enough to
+# build a running app.
+if [ -d "Resources/AppIcon.icon" ] && xcrun --find actool >/dev/null 2>&1; then
+    ICON_WORK="$(mktemp -d)"
+    # Both paths absolute. actool resolves relative paths against something
+    # other than the working directory -- the output landed a level up and the
+    # input could not be found at all.
+    xcrun actool "$(pwd)/Resources/AppIcon.icon" \
+        --compile "$(pwd)/$BUNDLE/Contents/Resources" \
+        --app-icon AppIcon \
+        --output-partial-info-plist "$ICON_WORK/icon.plist" \
+        --platform macosx \
+        --minimum-deployment-target 14.0 \
+        --errors --warnings >/dev/null
+
+    # actool reports the keys it wants rather than assuming them; merging what
+    # it says beats hardcoding CFBundleIconName and finding out later that the
+    # set changed.
+    /usr/libexec/PlistBuddy -c "Merge $ICON_WORK/icon.plist" "$BUNDLE/Contents/Info.plist"
+    rm -rf "$ICON_WORK"
+    echo "    icon: compiled AppIcon.icon (Liquid Glass + .icns fallback)"
+elif [ -f "$REPO_ROOT/assets/AppIcon.icns" ]; then
     cp "$REPO_ROOT/assets/AppIcon.icns" "$BUNDLE/Contents/Resources/AppIcon.icns"
+    echo "    icon: AppIcon.icns (actool unavailable, no Liquid Glass icon)"
 fi
 
 # The pill's icons. Loaded by path at runtime rather than compiled in, exactly

@@ -23,11 +23,9 @@
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 
-	<!-- The icon is copied into Resources by build-app.sh; without this key
-	     nothing points at it and Finder, the Dock and the app switcher all
-	     show the generic placeholder instead. -->
-	<key>CFBundleIconFile</key>
-	<string>AppIcon</string>
+	<!-- CFBundleIconFile and CFBundleIconName are merged in at build time from
+	     what actool reports after compiling Resources/AppIcon.icon. Setting
+	     them here as well would just be a second copy to keep in step. -->
 
 	<!-- Required by App Store Connect. Dictation is Productivity; the
 	     alternative reading, Utilities, is where reviewers expect system

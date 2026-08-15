@@ -279,7 +279,15 @@ struct OverlayContentView: View {
             .frame(width: iconWidth, alignment: .center)
 
             Text(model.elapsedLabel)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                // SF Pro with tabular figures, rather than SF Mono.
+                //
+                // The timer needs digits of equal width or it changes width as
+                // it counts, shoving the waveform sideways every few seconds.
+                // `design: .monospaced` fixes that by switching to SF Mono,
+                // which brings the slashed zero and the code-editor look with
+                // it. `.monospacedDigit()` asks for the same thing SF Pro
+                // already has: the tabular figures Apple uses for clocks.
+                .font(.system(size: 12, weight: .medium).monospacedDigit())
                 .foregroundColor(iconColor.opacity(0.85))
                 .frame(width: isRecording ? timerWidth : 0, alignment: .leading)
                 .opacity(isRecording ? 1 : 0)
