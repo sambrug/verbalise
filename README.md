@@ -25,13 +25,14 @@ loads take seconds.
 
 ## Using it
 
-Hold Right Shift, speak, release. Escape cancels without typing anything.
+Hold Right Option + Right Shift, speak, release. Escape cancels without
+typing anything.
 
 Long dictations are transcribed in chunks while you talk, so the wait after
 you let go stays at a second or two however long you spoke.
 
-The trigger key is configurable — any modifier, or a pair like Right Option +
-Right Shift.
+The trigger key is configurable — a pair like the default, or any single
+modifier such as Right Shift.
 
 ## Permissions
 
@@ -73,7 +74,7 @@ Settings ▸ General ▸ Open Configuration File, or:
 | Setting | Default | |
 |---|---|---|
 | `transcription_model` | `balanced` | `fast`, `balanced` or `accurate` |
-| `trigger_key` | `shift_r` | Single key or combination, e.g. `alt_r+shift_r` |
+| `trigger_key` | `alt_r+shift_r` | Single key or combination, e.g. `shift_r` |
 | `language` | `en` | ISO 639-1 code, or `auto` |
 | `min_duration` | `0.5` | Shorter recordings are discarded |
 | `max_duration` | `300` | Auto-stops at this length |

@@ -177,7 +177,11 @@ public struct AdvancedSettings: Codable, Equatable, Sendable {
 /// "Open Config" relies on.
 public struct Settings: Codable, Equatable, Sendable {
     public var transcriptionModel: TranscriptionModel = .bundled
-    public var triggerKey: String = "shift_r"
+    // A two-key default: a single modifier fires on ordinary typing chords
+    // (Shift for a capital letter mid-sentence), and an accidental dictation
+    // types into whatever has focus. The pair costs nothing to hold and is
+    // never pressed by accident.
+    public var triggerKey: String = "alt_r+shift_r"
     public var language: String = "en"
     public var minDuration: Double = 0.5
     public var maxDuration: Double = 300
