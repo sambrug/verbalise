@@ -52,13 +52,13 @@ final class OverlayModel: ObservableObject {
     /// every recorder. `record.circle` reads as a button to press rather than a
     /// state, which is wrong for a readout.
     ///
-    /// `sparkles` rather than the singular `sparkle` is Apple's mark for
-    /// on-device intelligence, and is already what the Speech Model settings
-    /// pane uses -- the same symbol for the same idea in both places.
+    /// `sparkles.2` is the same idea as the `sparkles` in the Speech Model
+    /// settings pane -- Apple's mark for on-device intelligence -- in the
+    /// two-star cut, which sits better beside a waveform than the three.
     var symbolName: String {
         switch currentState {
         case "recording": "circle.fill"
-        case "transcribing", "cleaning": "sparkles"
+        case "transcribing", "cleaning": "sparkles.2"
         default: "circle.fill"
         }
     }
