@@ -38,14 +38,23 @@ public struct ModelRow: Equatable, Sendable {
     /// fresh install work with no network.
     public let isRemovable: Bool
 
+    /// Why the last download or compile attempt failed, if it did. Shown
+    /// inline on the row until a retry starts: a failed download that just
+    /// flips back to a "Download" button looks like the click never
+    /// registered, which teaches people the button is broken rather than the
+    /// network was.
+    public let failure: String?
+
     public init(
         model: TranscriptionModel,
         availability: ModelAvailability,
-        isRemovable: Bool = false
+        isRemovable: Bool = false,
+        failure: String? = nil
     ) {
         self.model = model
         self.availability = availability
         self.isRemovable = isRemovable
+        self.failure = failure
     }
 
     public var title: String { model.displayName }
@@ -142,49 +151,56 @@ public enum ModelCatalog {
     /// One row per tier, in a fixed order.
     ///
     /// - Parameters:
-    ///   - selected: the configured model.
+    ///   - active: the model dictation uses right now. Usually the selected
+    ///     model, but while a switch is staged — a new selection still
+    ///     downloading or compiling — the old model stays active, keeps its
+    ///     "In use" badge, and keeps transcribing. The selection checkmark is
+    ///     the view's to draw; this list only ever reports what is true.
     ///   - downloaded: which models are on disk. The bundled tier is always in
     ///     this set in a real build, but not in a development build, so it is
     ///     passed in rather than assumed.
     ///   - downloading: in-flight downloads and their progress.
     ///   - removable: which models have a deletable downloaded copy. A subset
     ///     of `downloaded`: the bundled tier is present but not removable.
-    ///   - compiling: models whose first-use Neural Engine compile is running
-    ///     — the selected one via the engine, others in the background.
+    ///   - compiling: models queued or running in the first-use Neural Engine
+    ///     compile queue.
+    ///   - failures: the last download/compile failure per tier, cleared when
+    ///     a retry starts.
     public static func rows(
-        selected: TranscriptionModel,
+        active: TranscriptionModel,
         downloaded: Set<TranscriptionModel>,
         downloading: [TranscriptionModel: Double?] = [:],
         removable: Set<TranscriptionModel> = [],
-        compiling: Set<TranscriptionModel> = []
+        compiling: Set<TranscriptionModel> = [],
+        failures: [TranscriptionModel: String] = [:]
     ) -> [ModelRow] {
         TranscriptionModel.allCases.map { model in
             ModelRow(
                 model: model,
                 availability: availability(
                     of: model,
-                    selected: selected,
+                    active: active,
                     downloaded: downloaded,
                     downloading: downloading,
                     compiling: compiling
                 ),
-                isRemovable: removable.contains(model)
+                isRemovable: removable.contains(model),
+                failure: failures[model]
             )
         }
     }
 
     static func availability(
         of model: TranscriptionModel,
-        selected: TranscriptionModel,
+        active: TranscriptionModel,
         downloaded: Set<TranscriptionModel>,
         downloading: [TranscriptionModel: Double?],
         compiling: Set<TranscriptionModel> = []
     ) -> ModelAvailability {
-        // Downloading wins over selected. Choosing a model that is not on disk
-        // both selects it and starts the fetch, and during that window the
-        // honest thing to show is the progress -- calling it "In use" when it
-        // cannot yet transcribe anything is what makes a slow first dictation
-        // look like a hang.
+        // Downloading wins over everything: whatever else is true of the
+        // tier, the honest thing to show while bytes are moving is the
+        // progress -- calling it anything grander when it cannot yet
+        // transcribe is what makes a slow first dictation look like a hang.
         if let fraction = downloading[model] {
             return .downloading(fraction: fraction)
         }
@@ -192,7 +208,7 @@ public enum ModelCatalog {
         // Compiling wins over "In use" for the same honesty: the badge would
         // claim a model that cannot yet transcribe anything.
         if compiling.contains(model) { return .compiling }
-        return model == selected ? .inUse : .ready
+        return model == active ? .inUse : .ready
     }
 
     // MARK: - Sizes

@@ -11,6 +11,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `self` strongly without a retain cycle through them.
     private static weak var shared: AppDelegate?
 
+    // MARK: - Event delivery
+
+    /// Everything the actors report back — dictation events, engine phases,
+    /// download and compile snapshots — funnelled through one stream and
+    /// consumed in arrival order on the main actor.
+    ///
+    /// Each callback used to spawn its own unstructured `Task { @MainActor }`,
+    /// and independent tasks carry no ordering guarantee: a pill "hide" could
+    /// in principle land before the "transcribing" it was meant to clear,
+    /// leaving the pill on screen forever, and a progress snapshot could
+    /// overwrite a newer one with an older one. The stream's buffer is FIFO,
+    /// which makes "events apply in the order they happened" a property of
+    /// the plumbing rather than a hope about the scheduler.
+    private enum AppEvent {
+        case dictation(DictationEvent)
+        case enginePhase(TranscriptionEngine.Phase)
+        case downloads([TranscriptionModel: Double?])
+        case prepares(Set<TranscriptionModel>)
+    }
+
+    private let events: AsyncStream<AppEvent>
+    private let eventSink: AsyncStream<AppEvent>.Continuation
+    private var eventPump: Task<Void, Never>?
+
+    override init() {
+        (events, eventSink) = AsyncStream.makeStream(of: AppEvent.self)
+        super.init()
+    }
+
+    private func startEventPump() {
+        eventPump = Task { [events] in
+            for await event in events {
+                AppDelegate.shared?.dispatch(event)
+            }
+        }
+    }
+
+    private func dispatch(_ event: AppEvent) {
+        switch event {
+        case .dictation(let event): handle(event)
+        case .enginePhase(let phase): show(phase: phase)
+        case .downloads(let inFlight): note(downloads: inFlight)
+        case .prepares(let inFlight): note(prepares: inFlight)
+        }
+    }
+
     private var menu: StatusMenu?
     private var keyTap: KeyTap?
     private var pill: OverlayPill?
@@ -19,63 +65,199 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = SettingsStore()
     private let stats = StatsStore()
 
+    /// The model dictation uses right now.
+    ///
+    /// `settings.transcriptionModel` is the *selection* — intent, persisted
+    /// the moment it is made. This is what is actually loaded and gating the
+    /// trigger key, and it only ever moves ready-to-ready: selecting a tier
+    /// that still needs downloading or compiling stages the switch, keeps
+    /// dictation on the current model, and swaps automatically the moment the
+    /// pipeline finishes. Before that split, selecting an unready tier
+    /// killed dictation outright for however many minutes the download and
+    /// compile took — clicking between models was the most dangerous thing
+    /// in the app.
+    private var activeModel: TranscriptionModel = .bundled
+
+    /// What the engine is told: the user's settings with the *active* model,
+    /// not the selected one. Language and vocabulary changes flow through
+    /// immediately; the model only changes when a switch actually lands.
+    private var engineSettings: Settings {
+        var engineSettings = settings
+        engineSettings.transcriptionModel = activeModel
+        return engineSettings
+    }
+
+    /// A switch that was ready to land mid-dictation waits here for idle.
+    private var activationPending = false
+
     private var controller: DictationController?
     private var session: AudioSession?
     private var engine: TranscriptionEngine?
 
-    /// Fetches tiers the user asked for but is not using yet. Separate from the
-    /// engine, which downloads only what it needs to transcribe right now.
-    private lazy var downloader = ModelDownloader { inFlight in
-        Task { @MainActor in
-            AppDelegate.shared?.note(downloads: inFlight)
-        }
+    /// Fetches model files. Every download runs here, whoever asked — the
+    /// Settings window, the launch preload, a refused keypress — so progress
+    /// has one source and Cancel always has a task to cancel.
+    private lazy var downloader = ModelDownloader.live { [eventSink] inFlight in
+        eventSink.yield(.downloads(inFlight))
     }
     private var cachedDownloads: [TranscriptionModel: Double?] = [:]
 
     private func note(downloads inFlight: [TranscriptionModel: Double?]) {
-        let finished = Set(cachedDownloads.keys).subtracting(inFlight.keys)
         cachedDownloads = inFlight
         SettingsWindow.refreshIfOpen()
-        // A download of the *selected* model drives the status line and the
-        // pulse, so they must notice it starting and finishing.
         refreshStatusLine()
-
-        // Download and compile are two halves of one lifecycle, so a fetch
-        // that just landed flows straight into its one-off ANE compile — now,
-        // while the user is elsewhere, not on their next keypress (#8). The
-        // selected model compiles in the engine, which keeps the result to
-        // dictate with; any other compiles in the background and keeps
-        // nothing. `isDownloaded` filters out the other ways a download
-        // leaves `inFlight`: a cancel or a failure leaves no folder behind.
-        for model in finished where TranscriptionEngine.isDownloaded(model) {
-            if model == settings.transcriptionModel {
-                preloadModel()
-            } else {
-                Task { await preparer.prepare(model) }
-            }
-        }
     }
 
-    /// Compiles downloaded-but-unselected tiers in the background, so
-    /// switching to them later is seconds, not minutes.
-    private lazy var preparer = ModelPreparer { inFlight in
-        Task { @MainActor in
-            AppDelegate.shared?.note(prepares: inFlight)
-        }
+    /// Runs every first-use Neural Engine compile, one at a time. The engine
+    /// itself never compiles; it waits for this.
+    private lazy var preparer = ModelPreparer.live { [eventSink] inFlight in
+        eventSink.yield(.prepares(inFlight))
     }
     private var cachedPrepares: Set<TranscriptionModel> = []
 
     private func note(prepares inFlight: Set<TranscriptionModel>) {
-        let finished = cachedPrepares.subtracting(inFlight)
         cachedPrepares = inFlight
         SettingsWindow.refreshIfOpen()
         refreshStatusLine()
+    }
 
-        // The user selected a model while its background compile was still
-        // running; it is ready now, so give the engine its fast load.
-        if finished.contains(settings.transcriptionModel),
-           TranscriptionEngine.isPrepared(settings.transcriptionModel) {
-            preloadModel()
+    // MARK: - Provisioning
+
+    /// The one pipeline that takes a tier from wherever it is to fully
+    /// usable: download, then the one-off compile, then — if it is the
+    /// selected model — the engine load.
+    ///
+    /// This replaces a web of "when X finishes, kick Y" callbacks whose gaps
+    /// were where the lifecycle bugs lived: steps could be started twice,
+    /// raced from two owners, or dropped between hand-offs. Each step joins
+    /// work already in flight rather than duplicating it, so calling this is
+    /// always safe — a repeat press of a dead trigger key, a re-selected
+    /// model, a Download click on a tier already fetching all land in the
+    /// same place.
+    private var provisions: [TranscriptionModel: Task<Void, Never>] = [:]
+
+    /// The last failed attempt per tier, for the pane's inline message.
+    /// Cleared the moment a retry starts, so the row never shows yesterday's
+    /// error over today's progress bar.
+    private(set) var modelFailures: [TranscriptionModel: String] = [:]
+
+    /// Which tier the menu's alert row is currently blaming, so a later
+    /// success clears exactly that alert and never someone else's.
+    private var alertedModelFailure: TranscriptionModel?
+
+    private func provision(_ model: TranscriptionModel) {
+        guard provisions[model] == nil else { return }
+        modelFailures[model] = nil
+        SettingsWindow.refreshIfOpen()
+        provisions[model] = Task { [downloader, preparer] in
+            var failure: String?
+            var wasCancelled = false
+            do {
+                try await downloader.ensureDownloaded(model)
+                try await preparer.ensurePrepared(model)
+            } catch is CancellationError {
+                wasCancelled = true
+            } catch {
+                failure = error.localizedDescription
+            }
+            AppDelegate.shared?.finishProvision(
+                of: model, failure: failure, cancelled: wasCancelled
+            )
+        }
+    }
+
+    private func finishProvision(of model: TranscriptionModel, failure: String?, cancelled: Bool) {
+        provisions[model] = nil
+        defer {
+            refreshStatusLine()
+            SettingsWindow.refreshIfOpen()
+        }
+        if let failure {
+            // Not fatal: the files are retried on the next ask — a keypress,
+            // a re-click of Download, the next launch. But it must be seen:
+            // inline on the tier's row, and — when it blocks the model the
+            // user is waiting on — as the menu's alert row too.
+            log("model: provisioning \(model.rawValue) failed — \(failure)")
+            modelFailures[model] = failure
+            if model == settings.transcriptionModel {
+                menu?.show(alert: "Couldn't get \(model.displayName) ready — \(failure)")
+                alertedModelFailure = model
+            }
+            return
+        }
+        if alertedModelFailure == model {
+            menu?.clearAlert()
+            alertedModelFailure = nil
+        }
+        if cancelled {
+            // Cancelling the switch target's download is cancelling the
+            // switch: the selection goes back to the model that was never
+            // going anywhere. Leaving it pointed at a tier nothing is
+            // fetching would strand the pane's checkmark on a model that
+            // never arrives.
+            if model == settings.transcriptionModel, model != activeModel {
+                var reverted = settings
+                reverted.transcriptionModel = activeModel
+                apply(settings: reverted)
+            }
+            return
+        }
+        guard model == settings.transcriptionModel else { return }
+        if model == activeModel {
+            // The launch (or retry) provision of the model already in charge:
+            // nothing to swap, just load it.
+            loadEngine()
+        } else {
+            activateSelectedModel()
+        }
+    }
+
+    /// Lands a staged switch: makes the selected model the active one.
+    ///
+    /// Only ever called once the selected model is fully provisioned. Waits
+    /// out a dictation in flight — swapping the engine's model under a live
+    /// recording trades a working transcription for a race — and lands on the
+    /// next return to idle.
+    private func activateSelectedModel() {
+        let selected = settings.transcriptionModel
+        guard selected != activeModel else {
+            activationPending = false
+            return
+        }
+        guard TranscriptionEngine.isPrepared(selected) else {
+            // Ready-to-ready only. If the files changed since the pipeline
+            // finished (deleted mid-switch, a stamp invalidated), run it
+            // again rather than activating a model that cannot transcribe.
+            provision(selected)
+            return
+        }
+        guard dictationState == .idle else {
+            activationPending = true
+            return
+        }
+        activationPending = false
+        activeModel = selected
+        log("model: switching dictation to \(selected.rawValue)")
+        syncEngine(thenLoad: true)
+        refreshStatusLine()
+        SettingsWindow.refreshIfOpen()
+    }
+
+    /// Pushes the current `engineSettings` to the engine, in order.
+    ///
+    /// Chained rather than fired as independent tasks: two pushes racing —
+    /// say, a settings change and the activation it triggered — could land
+    /// out of order and leave the engine on yesterday's model while the gate
+    /// checks today's. The chain makes last-call-wins actually true.
+    private var engineSync: Task<Void, Never>?
+
+    private func syncEngine(thenLoad: Bool = false) {
+        let snapshot = engineSettings
+        let previous = engineSync
+        engineSync = Task { [engine] in
+            await previous?.value
+            await engine?.apply(settings: snapshot)
+            if thenLoad { AppDelegate.shared?.loadEngine() }
         }
     }
 
@@ -89,6 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppDelegate.shared = self
         log("Verbalise launched")
 
+        startEventPump()
         installEditMenu()
         loadSettings()
         menu = StatusMenu(delegate: self)
@@ -142,7 +325,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // takes a few seconds; one that needs fetching, or whose files have
         // never been loaded (the multi-minute first-use ANE compile), shows
         // its progress in the menu and gates the trigger key until it's done.
-        preloadModel()
+        provision(settings.transcriptionModel)
         startIdleTimer()
     }
 
@@ -202,6 +385,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         inputPreview.stop()
         keyTap?.stop()
         pill?.quit()
+        eventSink.finish()
+        eventPump?.cancel()
         log("Verbalise terminating")
     }
 
@@ -248,6 +433,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !result.validation.isValid {
             menu?.show(alert: result.validation.errors.joined(separator: " · "))
         }
+        // At launch the selection is the active model by definition: there is
+        // no previous model to keep dictating with, so if it needs work the
+        // trigger key gates until the pipeline finishes, exactly as before.
+        activeModel = settings.transcriptionModel
         log("config: model=\(settings.transcriptionModel.rawValue) trigger=\(settings.triggerKey)")
     }
 
@@ -290,8 +479,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func buildStack() {
         pill = OverlayPill(style: settings.overlayStyle, meter: meter)
 
-        let engine = TranscriptionEngine(settings: settings) { phase in
-            Task { @MainActor in AppDelegate.shared?.show(phase: phase) }
+        let engine = TranscriptionEngine(settings: engineSettings) { [eventSink] phase in
+            eventSink.yield(.enginePhase(phase))
         }
 
         let controller = DictationController(
@@ -299,13 +488,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             transcriber: engine,
             inserter: TextInserter(keyboard: SystemKeyboard(), pasteboard: SystemPasteboard()),
             settings: settings,
-            emit: { event in
-                Task { @MainActor in AppDelegate.shared?.handle(event) }
+            emit: { [eventSink] event in
+                eventSink.yield(.dictation(event))
             }
         )
 
         self.engine = engine
         self.controller = controller
+        // The old chain belongs to the engine it was pushing to.
+        engineSync = nil
         refreshStatusLine()
     }
 
@@ -339,18 +530,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return session
     }
 
-    /// Loads the model in the background at launch, and after a model change.
+    /// Loads the provisioned model into memory in the background.
     ///
-    /// A failure here is not fatal and deliberately does not alert: the next
-    /// dictation retries, and a transient network problem at launch should not
-    /// greet the user with a dialog about something they were not doing.
-    private func preloadModel() {
+    /// Only ever called for a model the pipeline has finished with, so this is
+    /// a few-second cached load, never a download or compile. A failure is not
+    /// fatal and deliberately does not alert: the next dictation retries, and
+    /// a transient problem at launch should not greet the user with a dialog
+    /// about something they were not doing.
+    private func loadEngine() {
         guard let engine else { return }
         Task.detached(priority: .utility) {
             do {
                 try await engine.ensureLoaded()
             } catch {
-                log("model: preload failed — \(error.localizedDescription)")
+                log("model: load failed — \(error.localizedDescription)")
             }
         }
     }
@@ -391,37 +584,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // dictation gets it.
             inputPreview.stop()
 
-            // Refuse while the model cannot transcribe yet. Recording into a
+            // Refuse while the *active* model cannot transcribe yet — with a
+            // staged switch in flight the active model is by construction
+            // ready, so this only ever gates the first provision of a fresh
+            // selection (typically first launch). Recording into a
             // multi-minute wait produces a dictation that looks hung, and the
-            // user has no way to tell it apart from a crash — better to say so
-            // and let them try again in a moment. Two waits qualify: a
+            // user has no way to tell it apart from a crash — better to say
+            // so and let them try again in a moment. Two waits qualify: a
             // download, and the ANE compile on the first load of freshly
-            // downloaded files. A *cached* load stays ungated — it takes a few
-            // seconds, which is time the user spends speaking anyway.
-            // A refusal shows nothing of its own: the pulsing menu bar icon
+            // downloaded files — and the stamp check covers both, since a
+            // model with no complete folder cannot be stamped. A *cached*
+            // load stays ungated — it takes a few seconds, which is time the
+            // user spends speaking anyway.
+            // A refusal shows little of its own: the pulsing menu bar icon
             // and the clickable status line are already reporting the wait,
             // and both started when the wait did, not at this keypress. (An
             // alert row and a pill flash were tried and retired here — one
             // broke the menu's pattern, the other the pill's shape.)
-            let model = settings.transcriptionModel
-            var downloading = cachedDownloads.keys.contains(model)
-            if case .downloading = enginePhase { downloading = true }
-            if downloading {
-                log("dictation: refused, model still downloading")
-                return
-            }
-            // Asked of the stamp rather than the phase, because the phase
-            // cannot warn about work that has not started yet: the compile may
-            // still be queued behind a preload, or not be underway at all.
-            if enginePhase != .ready, !TranscriptionEngine.isPrepared(model) {
-                log("dictation: refused, model needs its first-use compile")
-                // Make sure that compile is actually underway — unless the
-                // background preparer already has it, in which case a second,
-                // racing compile of the same files helps nobody. Repeat
-                // presses join whichever is running.
-                if !cachedPrepares.contains(model) {
-                    preloadModel()
-                }
+            if !TranscriptionEngine.isPrepared(activeModel) {
+                log("dictation: refused, the speech model isn't ready")
+                // The one addition at the keypress itself: the refusal sound,
+                // so "not ready yet" is tellable from "broken" without
+                // touching the pill.
+                if settings.soundEnabled { Sounds.playUnavailable() }
+                // Make sure the missing work is actually underway. Joins
+                // whatever is already running; a repeat press cannot start
+                // anything twice.
+                provision(settings.transcriptionModel)
                 return
             }
             if settings.soundEnabled { Sounds.playStart() }
@@ -454,6 +643,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch event {
         case .state(let state):
             dictationState = state
+            // A switch that was ready mid-dictation lands now, before the
+            // status line redraws, so the menu never shows the old model as
+            // current for a frame longer than it is.
+            if state == .idle, activationPending {
+                activateSelectedModel()
+            }
             refreshStatusLine()
 
         case .pill(let command):
@@ -496,7 +691,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func show(phase: TranscriptionEngine.Phase) {
         enginePhase = phase
         switch phase {
-        case .downloading, .preparing, .loading:
+        case .loading:
             break
         case .ready:
             // The idle countdown starts from the moment there is something to
@@ -506,10 +701,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { await lifecycle.noteUnloaded() }
         }
         refreshStatusLine()
-        // The engine downloads too, and the Settings window must show that as
-        // one download rather than none -- otherwise a model fetched on the way
-        // to a dictation appears in the list as simply missing.
-        SettingsWindow.refreshIfOpen()
+    }
+
+    /// Whether the trigger key would be refused right now: the active model's
+    /// files are missing or haven't been through their first-use compile.
+    /// With a staged switch in flight the active model stays ready, so this
+    /// is true only while the selection itself is being provisioned for the
+    /// first time.
+    private var dictationGated: Bool {
+        !TranscriptionEngine.isPrepared(activeModel)
+    }
+
+    /// One extra line of the compile/download hint while a switch is staged,
+    /// so nobody wonders whether they can dictate meanwhile. Nil when the
+    /// working tier IS the selection, where the wait really does gate.
+    private var stagedHint: String? {
+        guard settings.transcriptionModel != activeModel else { return nil }
+        return "Dictation keeps using \(activeModel.displayName) until then."
     }
 
     /// The status line's one writer.
@@ -520,27 +728,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the model was still minutes from loaded (#8). Deriving the line from
     /// both here means neither can contradict the other: dictation activity
     /// outranks engine phases, and an idle dictation shows whatever the
-    /// engine is doing.
-    /// Whether the selected model is mid-download or mid-compile — the two
-    /// waits dictation is gated behind. Background work on *other* tiers
-    /// deliberately doesn't count: dictation works throughout, so there is
-    /// nothing to pull the eye to; the Speech Model pane shows it to whoever
-    /// goes looking.
-    private var selectedModelBusy: Bool {
-        switch enginePhase {
-        case .downloading, .preparing:
-            return true
-        case .loading, .ready, .idle:
-            return cachedDownloads.keys.contains(settings.transcriptionModel)
-                || cachedPrepares.contains(settings.transcriptionModel)
-        }
-    }
-
+    /// pipeline is doing to the *selected* model. Background work on other
+    /// tiers deliberately doesn't show: dictation works throughout, so there
+    /// is nothing to pull the eye to; the Speech Model pane shows it to
+    /// whoever goes looking.
     private func refreshStatusLine() {
-        // The pulse runs exactly as long as the selected model is unusable.
-        // First, so the icon it resets on the way out is immediately
-        // re-asserted by whichever show() call follows.
-        menu?.setPulsing(dictationState == .idle && selectedModelBusy)
+        // The pulse runs exactly as long as dictation is gated — the one
+        // signal that means "the key won't work yet". A staged switch never
+        // pulses: dictation keeps working, and the status line alone carries
+        // the progress. First, so the icon it resets on the way out is
+        // immediately re-asserted by whichever show() call follows.
+        menu?.setPulsing(dictationState == .idle && dictationGated)
 
         switch dictationState {
         case .recording:
@@ -551,39 +749,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .transcribing:
             menu?.show(state: .transcribing)
         case .idle:
-            switch enginePhase {
-            case .downloading(let fraction):
+            // Every download and compile is the pipeline's now, so the caches
+            // are the whole story; the engine only ever adds a few seconds of
+            // "Loading model…".
+            if let fraction = cachedDownloads[settings.transcriptionModel] {
                 show(downloadStatus: fraction)
-            case .preparing:
+            } else if cachedPrepares.contains(settings.transcriptionModel) {
                 showCompilingStatus()
-            case .loading:
+            } else if enginePhase == .loading {
                 menu?.show(status: "Loading model…")
-            case .ready, .idle:
-                // The engine is quiet, but the selected model may be moving
-                // through its lifecycle elsewhere: fetched by the downloader,
-                // or compiled by the background preparer.
-                if let fraction = cachedDownloads[settings.transcriptionModel] {
-                    show(downloadStatus: fraction)
-                } else if cachedPrepares.contains(settings.transcriptionModel) {
-                    showCompilingStatus()
-                } else {
-                    menu?.show(state: .idle)
-                }
+            } else if dictationGated {
+                // Nothing is running and the key would still be refused — a
+                // failed provision (the alert row has the specifics), or work
+                // that hasn't started. "Ready — hold X" here would be a lie
+                // the very next keypress exposes.
+                menu?.show(status: "\(activeModel.displayName) isn't ready")
+            } else {
+                menu?.show(state: .idle)
             }
         }
     }
 
     private func show(downloadStatus fraction: Double?) {
-        menu?.show(status: fraction.map { "Downloading model \(Int($0 * 100))%" }
-            ?? "Downloading model…")
+        let name = settings.transcriptionModel.displayName
+        menu?.show(
+            status: fraction.map { "Downloading \(name) \(Int($0 * 100))%" }
+                ?? "Downloading \(name)…",
+            hint: stagedHint
+        )
     }
 
     private func showCompilingStatus() {
+        let explainer = "macOS is preparing the model for this Mac's Neural Engine — "
+            + "a one-off step after each download that takes a few minutes."
+        // Only a gating compile pauses dictation; a staged one explains
+        // itself instead.
+        let tail = stagedHint ?? "Dictation is paused until it finishes."
         menu?.show(
-            status: "Compiling speech model…",
-            hint: "macOS is preparing the model for this Mac's Neural Engine — "
-                + "a one-off step after each download that takes a few minutes. "
-                + "Dictation is paused until it finishes."
+            status: "Compiling \(settings.transcriptionModel.displayName)…",
+            hint: "\(explainer) \(tail)"
         )
     }
 }
@@ -611,6 +815,10 @@ extension AppDelegate: SettingsDelegate {
     var currentSettings: Settings { settings }
     var currentStats: UsageStats { cachedStats }
 
+    /// The model dictation actually uses right now — behind the selection
+    /// while a staged switch is still downloading or compiling.
+    var activeTranscriptionModel: TranscriptionModel { activeModel }
+
     /// Which tiers are on disk. Asked fresh rather than cached: a download that
     /// finished a second ago must show as available, and the answer is a
     /// filesystem check on three paths.
@@ -618,30 +826,25 @@ extension AppDelegate: SettingsDelegate {
         TranscriptionEngine.downloadedModels
     }
 
-    /// In-flight downloads from both sources — the explicit ones the user
-    /// started in the window, and the implicit one the engine starts when the
-    /// configured model is missing.
+    /// In-flight downloads. One source now — every download runs in the
+    /// downloader, so this is the whole truth and Cancel always has a task
+    /// behind it.
     var modelDownloads: [TranscriptionModel: Double?] {
-        var all = cachedDownloads
-        if case .downloading(let fraction) = enginePhase {
-            all.updateValue(fraction, forKey: settings.transcriptionModel)
-        }
-        return all
+        cachedDownloads
     }
 
-    /// Models mid first-use compile, from both sources — the selected one the
-    /// engine is compiling to dictate with, and any the preparer is compiling
-    /// in the background.
+    /// Models queued or running in the compile queue. One source, same
+    /// reasoning.
     var compilingModels: Set<TranscriptionModel> {
-        var all = cachedPrepares
-        if enginePhase == .preparing {
-            all.insert(settings.transcriptionModel)
-        }
-        return all
+        cachedPrepares
     }
 
+    /// The pane's Download button. Through the full pipeline, not just the
+    /// fetch: a downloaded-but-uncompiled tier would still cost minutes at
+    /// selection time, and paying that now, in the background, is the whole
+    /// point of pre-fetching.
     func downloadModel(_ model: TranscriptionModel) {
-        Task { await downloader.start(model) }
+        provision(model)
     }
 
     func cancelModelDownload(_ model: TranscriptionModel) {
@@ -649,10 +852,13 @@ extension AppDelegate: SettingsDelegate {
     }
 
     var removableModels: Set<TranscriptionModel> {
-        // Never the model in use: removing what is loaded would leave the next
-        // dictation with nothing to transcribe with, and the pane offers no
-        // way to ask for that.
-        TranscriptionEngine.removableModels.subtracting([settings.transcriptionModel])
+        // Never the model in use, and never the selection: removing what is
+        // loaded would leave the next dictation with nothing to transcribe
+        // with, and removing a staged switch's target would delete the files
+        // its own pipeline is working on. The pane offers no way to ask for
+        // either.
+        TranscriptionEngine.removableModels
+            .subtracting([settings.transcriptionModel, activeModel])
     }
 
     func removeModel(_ model: TranscriptionModel) {
@@ -712,37 +918,26 @@ extension AppDelegate: SettingsDelegate {
             log("config: audio input changed, rebuilding the session")
         }
 
-        // preloadModel's doc promised "after a model change" from the start,
-        // but nothing called it — so a switched model sat unloaded until the
-        // next keypress, and if its files had never been loaded before, that
-        // keypress ran into the full first-use compile. Two hands-off cases:
-        // an absent tier is already being fetched by the ModelDownloader
-        // (SettingsWindow.select starts that), and a tier mid-background-
-        // compile is already being prepared — in both, a second worker on the
-        // same files would only race the first. note(downloads:)/(prepares:)
-        // pick each up the moment it finishes.
-        let modelChanged = old.transcriptionModel != newSettings.transcriptionModel
-
-        // Switching away mid-compile abandons the engine's load, but not the
-        // compile: hand it to the background preparer, so the tier keeps its
-        // "Compiling…" row in the pane — the same way a background download
-        // keeps its bar — and its place in the pipeline. The preparer's work
-        // mostly lands in macOS's cache warm from the abandoned load, so this
-        // costs little and makes the finish observable (the stamp, the row
-        // clearing, the fast load if the user switches back).
-        if modelChanged, enginePhase == .preparing {
-            let abandoned = old.transcriptionModel
-            Task { await preparer.prepare(abandoned) }
+        // A selection change either lands now (the tier is ready: a
+        // few-second engine swap) or stages: the pipeline downloads and
+        // compiles in the background while dictation carries on with the
+        // active model, and finishProvision lands the switch when it's done.
+        // Every step joins work already in flight — a tier mid-download or
+        // mid-compile keeps its place and its progress row; nothing restarts.
+        if old.transcriptionModel != newSettings.transcriptionModel {
+            if TranscriptionEngine.isPrepared(newSettings.transcriptionModel) {
+                activateSelectedModel()
+            } else {
+                provision(newSettings.transcriptionModel)
+            }
         }
 
-        Task { [engine, controller, newSettings] in
-            await engine?.apply(settings: newSettings)
+        // The engine gets the settings with the *active* model substituted —
+        // decided above — so language and vocabulary changes apply
+        // immediately while the model only moves when a switch lands.
+        syncEngine()
+        Task { [controller, newSettings] in
             await controller?.apply(settings: newSettings)
-            if modelChanged,
-               TranscriptionEngine.isDownloaded(newSettings.transcriptionModel),
-               AppDelegate.shared?.cachedPrepares.contains(newSettings.transcriptionModel) != true {
-                AppDelegate.shared?.preloadModel()
-            }
         }
 
         if audioChanged {

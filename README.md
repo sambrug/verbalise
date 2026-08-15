@@ -60,8 +60,10 @@ again.
 | Permissions | The three grants |
 
 Three models are available: Fast (Whisper Small), Balanced (Large v3 Turbo)
-and Accurate (Large v3). Models download and compile in the background, so
-you can keep dictating with whichever is ready while another prepares.
+and Accurate (Large v3). Models download and compile in the background, and
+switching to one that isn't ready yet is safe: dictation keeps using the
+current model and swaps over on its own the moment the new one is ready.
+Cancelling that download puts the selection back where it was.
 
 ## Configuration
 

@@ -6,20 +6,22 @@ import Testing
 /// The Speech Model pane's state table.
 ///
 /// Worth testing apart from the window because four independent signals feed
-/// one row -- selected, on disk, downloading, progress known -- and the
+/// one row -- active, on disk, downloading, progress known -- and the
 /// combinations that matter are the ones a screenshot never shows you.
+/// "Active" is the model dictation uses right now; while a switch is staged
+/// it differs from the checkmarked selection, which is the view's concern.
 @Suite("Model catalog")
 struct ModelCatalogTests {
 
     @Test("One row per tier, in a stable order")
     func rowsCoverEveryTier() {
-        let rows = ModelCatalog.rows(selected: .balanced, downloaded: [.balanced])
+        let rows = ModelCatalog.rows(active: .balanced, downloaded: [.balanced])
         #expect(rows.map(\.model) == TranscriptionModel.allCases)
     }
 
-    @Test("The selected model on disk is the one in use")
+    @Test("The active model on disk is the one in use")
     func selectedAndPresentIsInUse() {
-        let rows = ModelCatalog.rows(selected: .balanced, downloaded: [.balanced])
+        let rows = ModelCatalog.rows(active: .balanced, downloaded: [.balanced])
         let balanced = rows.first { $0.model == .balanced }
         #expect(balanced?.availability == .inUse)
         #expect(balanced?.badge == "In use")
@@ -28,9 +30,9 @@ struct ModelCatalogTests {
         #expect(balanced?.action == nil)
     }
 
-    @Test("A downloaded model that is not selected is one click away")
+    @Test("A downloaded model that is not active is one click away")
     func downloadedButUnselectedIsReady() {
-        let rows = ModelCatalog.rows(selected: .balanced, downloaded: [.balanced, .fast])
+        let rows = ModelCatalog.rows(active: .balanced, downloaded: [.balanced, .fast])
         let fast = rows.first { $0.model == .fast }
         #expect(fast?.availability == .ready)
         #expect(fast?.badge == nil)
@@ -44,7 +46,7 @@ struct ModelCatalogTests {
         // Without this the accurate tier is three gigabytes that only deleting
         // the whole app reclaims.
         let rows = ModelCatalog.rows(
-            selected: .balanced,
+            active: .balanced,
             downloaded: [.balanced, .accurate],
             removable: [.accurate]
         )
@@ -60,7 +62,7 @@ struct ModelCatalogTests {
         // Deleting the loaded model's files would leave the next dictation
         // with nothing to transcribe with.
         let rows = ModelCatalog.rows(
-            selected: .accurate,
+            active: .accurate,
             downloaded: [.accurate],
             removable: [.accurate]
         )
@@ -72,7 +74,7 @@ struct ModelCatalogTests {
         // It lives in the app bundle, which is read-only under the sandbox and
         // is what makes a fresh install work offline.
         let rows = ModelCatalog.rows(
-            selected: .fast,
+            active: .fast,
             downloaded: [.fast, .balanced],
             removable: []
         )
@@ -83,7 +85,7 @@ struct ModelCatalogTests {
     @Test("A download in flight is never mistaken for something to remove")
     func downloadingIsNotRemovable() {
         let rows = ModelCatalog.rows(
-            selected: .balanced,
+            active: .balanced,
             downloaded: [.balanced],
             downloading: [.accurate: 0.3],
             removable: [.accurate]
@@ -93,7 +95,7 @@ struct ModelCatalogTests {
 
     @Test("A model that is not on disk offers a download")
     func absentOffersDownload() {
-        let rows = ModelCatalog.rows(selected: .balanced, downloaded: [.balanced])
+        let rows = ModelCatalog.rows(active: .balanced, downloaded: [.balanced])
         let accurate = rows.first { $0.model == .accurate }
         #expect(accurate?.availability == .absent)
         #expect(accurate?.action == .download)
@@ -104,7 +106,7 @@ struct ModelCatalogTests {
     @Test("A download in flight offers a cancel and a progress bar")
     func downloadingOffersCancel() {
         let rows = ModelCatalog.rows(
-            selected: .balanced,
+            active: .balanced,
             downloaded: [.balanced],
             downloading: [.accurate: 0.62]
         )
@@ -120,19 +122,19 @@ struct ModelCatalogTests {
         // The whole point of separating download from selection: dictation must
         // keep working with the current model while a larger one is fetched.
         let rows = ModelCatalog.rows(
-            selected: .balanced,
+            active: .balanced,
             downloaded: [.balanced],
             downloading: [.accurate: 0.62]
         )
         #expect(rows.first { $0.model == .balanced }?.availability == .inUse)
     }
 
-    @Test("A model selected before it finishes downloading reads as downloading")
+    @Test("The active model mid-download reads as downloading, not in use")
     func selectedWhileDownloadingIsNotInUse() {
         // Calling it "In use" while it cannot transcribe anything is exactly
         // what makes the first dictation after a switch look like a hang.
         let rows = ModelCatalog.rows(
-            selected: .accurate,
+            active: .accurate,
             downloaded: [.balanced],
             downloading: [.accurate: 0.1]
         )
@@ -147,7 +149,7 @@ struct ModelCatalogTests {
         // cannot yet transcribe anything is what makes the multi-minute
         // Neural Engine compile look like a hang.
         let rows = ModelCatalog.rows(
-            selected: .balanced,
+            active: .balanced,
             downloaded: [.balanced],
             compiling: [.balanced]
         )
@@ -162,7 +164,7 @@ struct ModelCatalogTests {
     @Test("The compile only marks the models actually compiling")
     func compilingDoesNotSpread() {
         let rows = ModelCatalog.rows(
-            selected: .balanced,
+            active: .balanced,
             downloaded: [.balanced, .fast],
             compiling: [.balanced]
         )
@@ -170,13 +172,14 @@ struct ModelCatalogTests {
         #expect(rows.first { $0.model == .fast }?.isCompiling == false)
     }
 
-    @Test("A background compile shows on a model that is not selected")
+    @Test("A staged switch keeps the old model in use while the new one compiles")
     func backgroundCompileShows() {
-        // Downloads and compiles are background lifecycle steps: a tier can
-        // compile while dictation carries on with the current model, and the
-        // pane must show that rather than a "Ready" it cannot yet honour.
+        // The staged-switch contract: selecting a tier that still needs its
+        // download or compile keeps dictation on the current model, so the
+        // pane must show the old tier as in use and the new one as working —
+        // never a "Ready" it cannot yet honour.
         let rows = ModelCatalog.rows(
-            selected: .balanced,
+            active: .balanced,
             downloaded: [.balanced, .accurate],
             compiling: [.accurate]
         )
@@ -187,7 +190,7 @@ struct ModelCatalogTests {
     @Test("A download whose size is not yet known still reads as a download")
     func unknownProgressIsStillDownloading() {
         let rows = ModelCatalog.rows(
-            selected: .balanced,
+            active: .balanced,
             downloaded: [.balanced],
             downloading: [.fast: Double?.none]
         )
@@ -198,11 +201,28 @@ struct ModelCatalogTests {
         #expect(fast?.detail.hasSuffix("Downloading…") == true)
     }
 
+    @Test("A failed attempt keeps its message on the row until a retry starts")
+    func failureShowsOnItsRow() {
+        // A failed download that silently flips back to "Download" looks like
+        // the click never registered. The row keeps the reason, and the
+        // Download button doubles as the retry.
+        let rows = ModelCatalog.rows(
+            active: .balanced,
+            downloaded: [.balanced],
+            failures: [.accurate: "The Internet connection appears to be offline."]
+        )
+        let accurate = rows.first { $0.model == .accurate }
+        #expect(accurate?.failure == "The Internet connection appears to be offline.")
+        #expect(accurate?.action == .download)
+        // Only the tier that failed carries the message.
+        #expect(rows.first { $0.model == .balanced }?.failure == nil)
+    }
+
     @Test("A development build with nothing on disk offers all three")
     func nothingDownloadedOffersEverything() {
         // The bundled tier is only bundled in a release build; a dev build
         // starts empty and must not claim otherwise.
-        let rows = ModelCatalog.rows(selected: .balanced, downloaded: [])
+        let rows = ModelCatalog.rows(active: .balanced, downloaded: [])
         #expect(rows.allSatisfy { $0.availability == .absent })
         #expect(rows.allSatisfy { $0.action == .download })
     }
@@ -211,7 +231,7 @@ struct ModelCatalogTests {
 
     @Test("Every tier's detail names the trade and the size")
     func detailPairsSummaryWithSize() {
-        let rows = ModelCatalog.rows(selected: .balanced, downloaded: [.balanced])
+        let rows = ModelCatalog.rows(active: .balanced, downloaded: [.balanced])
         #expect(rows[0].detail == "Quickest, least accurate · Whisper Small · 216 MB")
         #expect(
             rows[1].detail
