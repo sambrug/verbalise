@@ -578,6 +578,26 @@ private struct PermissionsPane: View {
                      : readyMessage)
                 .settingsFootnote()
             }
+
+            // Only while something is missing, because that is the only time
+            // it can help. macOS frequently keeps answering with the *old*
+            // grant state for an app that is already running — Input
+            // Monitoring in particular often applies only after a relaunch —
+            // so a user can grant everything correctly, watch this pane
+            // refuse to notice, and reasonably conclude it is broken. The
+            // pane polls every second; when the rows still will not turn
+            // green, this is the fix, offered where the confusion happens.
+            if model.permissionsNeedAttention {
+                Section {
+                    Button("Restart Verbalise") { model.restart() }
+                } footer: {
+                    Text("Granted a permission and it still shows as off? "
+                         + "macOS sometimes only applies these changes after "
+                         + "the app reopens. Restarting takes a moment and "
+                         + "keeps your settings.")
+                    .settingsFootnote()
+                }
+            }
         }
         .paneStyle()
     }
