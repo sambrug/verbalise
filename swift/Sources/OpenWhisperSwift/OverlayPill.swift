@@ -25,7 +25,7 @@ import SwiftUI
 
 // MARK: - Pill Icon Loading
 
-private let pillIconDirectory: String = {
+let pillIconDirectory: String = {
     // Bundled: Contents/Resources/SVG icons for menu bar/
     if let resources = Bundle.main.resourceURL {
         let bundled = resources.appendingPathComponent("SVG icons for menu bar")
@@ -39,7 +39,12 @@ private let pillIconDirectory: String = {
     return (executableDirectory as NSString).appendingPathComponent("SVG icons for menu bar")
 }()
 
-private func loadPillIcon(_ filename: String) -> NSImage? {
+/// Loads one of the shared SVGs as a template image.
+///
+/// Internal rather than file-private: the status menu draws the app's mark from
+/// the same folder, and two copies of this would be two places for the bundle
+/// path to go wrong.
+func loadPillIcon(_ filename: String) -> NSImage? {
     let path = (pillIconDirectory as NSString).appendingPathComponent(filename)
     guard let image = NSImage(contentsOfFile: path) else { return nil }
     image.isTemplate = true
@@ -291,7 +296,7 @@ struct OverlayContentView: View {
                 // which brings the slashed zero and the code-editor look with
                 // it. `.monospacedDigit()` asks for the same thing SF Pro
                 // already has: the tabular figures Apple uses for clocks.
-                .font(.system(size: 14, weight: .medium).monospacedDigit())
+                .font(.system(size: 13, weight: .medium).monospacedDigit())
                 .foregroundColor(iconColor.opacity(0.85))
                 .frame(width: isRecording ? timerWidth : 0, alignment: .leading)
                 .opacity(isRecording ? 1 : 0)

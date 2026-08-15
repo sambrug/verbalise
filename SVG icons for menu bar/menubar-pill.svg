@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="372" height="278" viewBox="326 373 372 278">
+  <title>Open Whisper — menu bar mark, resting</title>
+  <!--
+    The app icon's own glyph, cropped from AppIcon.icon/Assets/pill-glyph.svg
+    to the mark's bounds so it fills the image rather than sitting in a
+    1024pt field of nothing.
+
+    Kept in the same coordinate space as menubar-bars.svg, so the bars land in
+    exactly the same place in both states and the icon does not appear to
+    resize when recording starts.
+  -->
+  <path fill="#000000" fill-rule="evenodd" d="
+    M 326,373 H 698 A 139,139 0 0 1 698,651 H 326 A 139,139 0 0 1 326,373 Z
+    M 385.4375,488.5625 A 14.0625,14.0625 0 0 1 413.5625,488.5625 L 413.5625,535.4375 A 14.0625,14.0625 0 0 1 385.4375,535.4375 Z
+    M 441.6875,451.0625 A 14.0625,14.0625 0 0 1 469.8125,451.0625 L 469.8125,572.9375 A 14.0625,14.0625 0 0 1 441.6875,572.9375 Z
+    M 497.9375,413.5625 A 14.0625,14.0625 0 0 1 526.0625,413.5625 L 526.0625,610.4375 A 14.0625,14.0625 0 0 1 497.9375,610.4375 Z
+    M 554.1875,451.0625 A 14.0625,14.0625 0 0 1 582.3125,451.0625 L 582.3125,572.9375 A 14.0625,14.0625 0 0 1 554.1875,572.9375 Z
+    M 610.4375,488.5625 A 14.0625,14.0625 0 0 1 638.5625,488.5625 L 638.5625,535.4375 A 14.0625,14.0625 0 0 1 610.4375,535.4375 Z
+  "/>
+</svg>

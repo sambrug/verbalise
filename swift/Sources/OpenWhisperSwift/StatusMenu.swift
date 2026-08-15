@@ -127,19 +127,53 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     private static let symbolConfiguration =
         NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
 
+    /// The menu bar height the mark is drawn to fit.
+    ///
+    /// The glyph is much wider than it is tall, so height is what has to be
+    /// pinned; the width follows from the aspect ratio. 17pt puts the bars at
+    /// roughly 1.8pt, which is where the old waveform artwork sat.
+    private static let markHeight: CGFloat = 17
+
+    /// The app icon's own mark, at menu bar size.
+    ///
+    /// Cropped from the same SVGs the icon is built from, so the thing in the
+    /// menu bar and the thing in the Dock are recognisably one design. Both
+    /// states share a coordinate space, so the bars do not shift or resize when
+    /// recording starts.
+    private static func mark(_ filename: String) -> NSImage? {
+        guard let image = loadPillIcon(filename) else { return nil }
+        let size = image.size
+        guard size.height > 0 else { return nil }
+        image.size = NSSize(
+            width: size.width * (markHeight / size.height),
+            height: markHeight
+        )
+        // Template so the menu bar tints it: inverted while the menu is open,
+        // dimmed behind a Stage Manager window, and correct in both appearances.
+        image.isTemplate = true
+        return image
+    }
+
     private func setIcon(_ name: String, describing description: String) {
         let icon = NSImage(systemSymbolName: name, accessibilityDescription: description)?
             .withSymbolConfiguration(Self.symbolConfiguration)
-        // Template so the menu bar tints it, including inverted while the menu
-        // is open and dimmed in a Stage Manager background.
         icon?.isTemplate = true
         statusItem.button?.image = icon
     }
 
-    /// Deliberately not the Python app's icon (menubar.py:334) so the two are
-    /// tellable apart at a glance while both are installed.
+    /// Draws the app's mark, falling back to an SF Symbol if the artwork is
+    /// missing — a menu bar app with no icon has no way to be clicked.
+    private func setMark(_ filename: String, fallback: String, describing description: String) {
+        if let mark = Self.mark(filename) {
+            mark.accessibilityDescription = description
+            statusItem.button?.image = mark
+        } else {
+            setIcon(fallback, describing: description)
+        }
+    }
+
     private func showIdleIcon() {
-        setIcon("waveform.circle.fill", describing: Self.appName)
+        setMark("menubar-pill.svg", fallback: "waveform.circle.fill", describing: Self.appName)
     }
 
     // MARK: - Refresh
@@ -160,10 +194,10 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         // learn.
         case .recording:
             stateItem.title = "Recording…"
-            setIcon("waveform.circle", describing: "Recording")
+            setMark("menubar-bars.svg", fallback: "waveform.circle", describing: "Recording")
         case .transcribing:
             stateItem.title = "Transcribing…"
-            setIcon("waveform.circle", describing: "Transcribing")
+            setMark("menubar-bars.svg", fallback: "waveform.circle", describing: "Transcribing")
         }
     }
 
