@@ -1,4 +1,4 @@
-# Open Whisper
+# Verbalise
 
 Hold a key, talk, let go. The text appears where you were typing.
 
@@ -10,12 +10,18 @@ Requires macOS 14 or later on Apple Silicon.
 ## Install
 
 ```bash
-make swift-app
-make swift-install
+make signing-cert   # once per machine
+make app
+make install
 ```
 
 Open it, grant the three permissions it asks for, and a waveform icon appears
 in the menu bar.
+
+The first time a speech model is used, macOS compiles it for the Neural
+Engine — a one-off step that takes a few minutes per model. The menu bar icon
+pulses gently while it happens, and the menu says what's going on. After that,
+loads take seconds.
 
 ## Using it
 
@@ -52,15 +58,16 @@ again.
 | Vocabulary | Terms to favour, and corrections for words it mishears |
 | Permissions | The three grants |
 
-Three models are available. Whisper Large v3 Turbo ships inside the app and
-works offline from first launch; Small and Large v3 download on demand.
+Three models are available: Fast (Whisper Small), Balanced (Large v3 Turbo)
+and Accurate (Large v3). Models download and compile in the background, so
+you can keep dictating with whichever is ready while another prepares.
 
 ## Configuration
 
 Settings ▸ General ▸ Open Configuration File, or:
 
 ```
-~/Library/Containers/com.sambruggen.openwhisper/Data/Library/Application Support/config.json
+~/Library/Containers/com.sambruggen.verbalise/Data/Library/Application Support/config.json
 ```
 
 | Setting | Default | |
@@ -101,13 +108,17 @@ Settings ▸ Permissions.
 
 **It records but nothing is typed.** Accessibility isn't granted.
 
+**The menu bar icon is pulsing and dictation is refused.** The model in use is
+still downloading or compiling. Click the status line in the menu for
+details; it opens the Speech Model pane.
+
 **The first dictation after a few hours is slow.** The model unloaded and is
 reloading while you speak.
 
 **The pill won't go away.** Press Escape.
 
 ```bash
-BIN="/Applications/Open Whisper.app/Contents/MacOS/OpenWhisperSwift"
+BIN="/Applications/Verbalise.app/Contents/MacOS/Verbalise"
 $BIN --list-devices    # what CoreAudio can see
 $BIN --warm-model      # download and load the configured model
 $BIN --test-capture    # exercise the audio path with no keypress
@@ -117,18 +128,13 @@ $BIN --settings        # launch with Settings open
 ## Development
 
 ```bash
-make swift-test        # 194 tests
-make swift-run         # build and launch
-make swift-xcodeproj   # generate an .xcodeproj (needs xcodegen)
+make test        # the test suite (no Xcode required)
+make run         # build and launch
+make xcodeproj   # generate an .xcodeproj (needs xcodegen)
 ```
 
 SwiftPM builds and tests everything without Xcode. The Xcode project is only
 needed for an App Store archive.
-
-- [`swift/README.md`](swift/README.md) — module layout, signing, model
-  staging, and where this differs from the Python version
-- [`swift/PORT_STATUS.md`](swift/PORT_STATUS.md) — what's verified, what isn't
-- [`APP_STORE.md`](APP_STORE.md) — submission
 
 ## Licence
 
@@ -137,11 +143,4 @@ needed for an App Store archive.
 | | |
 |---|---|
 | [WhisperKit](https://github.com/argmaxinc/WhisperKit) | MIT, © 2024 argmax, inc. |
-| [swift-argument-parser](https://github.com/apple/swift-argument-parser) | Apache 2.0, © Apple Inc. |
 | Whisper models | MIT, © OpenAI |
-
-## The Python version
-
-`daemon.py`, `menubar.py` and the py2app build in the repo root are the
-original implementation. It's deprecated — still runnable via `make app`, but
-no longer developed.
