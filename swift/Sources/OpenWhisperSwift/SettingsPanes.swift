@@ -723,3 +723,51 @@ private extension SettingsModel {
         )
     }
 }
+
+// MARK: - Previews
+
+#if DEBUG
+
+/// Stands in for the app so the panes can be driven in Xcode's canvas.
+///
+/// Writes are kept, so toggles and pickers actually move rather than snapping
+/// back — the panes read their state through the delegate, and a stub that
+/// discarded writes would make every control look broken.
+@MainActor
+private final class PreviewDelegate: SettingsDelegate {
+    var currentSettings = OpenWhisperCore.Settings()
+    var currentStats = UsageStats(totalWords: 12_480, totalRecordings: 312)
+
+    /// Enough variety to see every row state at once: one in use, one
+    /// downloading, one absent.
+    var downloadedModels: Set<TranscriptionModel> = [.balanced]
+    var modelDownloads: [TranscriptionModel: Double?] = [.accurate: 0.62]
+    var removableModels: Set<TranscriptionModel> = []
+
+    let inputPreview = InputPreview()
+
+    func apply(settings: OpenWhisperCore.Settings) { currentSettings = settings }
+    func downloadModel(_ model: TranscriptionModel) {}
+    func cancelModelDownload(_ model: TranscriptionModel) {}
+    func removeModel(_ model: TranscriptionModel) {}
+    func openConfigFile() {}
+    func showLog() {}
+    func restart() {}
+    func reinstallKeyTap() {}
+    /// A canvas must not open the microphone.
+    func setInputPreview(active: Bool) {}
+}
+
+/// `SettingsModel` holds its delegate weakly, so something has to own it or the
+/// panes go blank the moment the preview body returns.
+private enum PreviewHost {
+    @MainActor static let delegate = PreviewDelegate()
+    @MainActor static let model = SettingsModel(delegate: delegate)
+}
+
+#Preview("Settings") {
+    SettingsRootView(model: PreviewHost.model)
+        .frame(width: 760, height: 560)
+}
+
+#endif

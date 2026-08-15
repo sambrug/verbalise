@@ -547,3 +547,49 @@ final class OverlayPill {
         teardown()
     }
 }
+
+// MARK: - Previews
+
+#if DEBUG
+
+/// The pill draws over whatever is behind the window, so a canvas preview
+/// shows its glass against the canvas background rather than a desktop. Good
+/// enough for geometry, spacing and animation; judge the material itself by
+/// running the app.
+private enum PillPreviewHost {
+    @MainActor static let recording: OverlayModel = {
+        let model = OverlayModel()
+        model.currentState = "recording"
+        model.visible = true
+        model.elapsedSeconds = 12
+        // A plausible waveform rather than a flat line.
+        model.levels = (0..<OverlayModel.barCount).map { index in
+            0.15 + 0.5 * abs(sin(Double(index) / 2.4))
+        }
+        return model
+    }()
+
+    @MainActor static let transcribing: OverlayModel = {
+        let model = OverlayModel()
+        model.currentState = "transcribing"
+        model.visible = true
+        return model
+    }()
+}
+
+// `PreviewProvider` rather than the `#Preview` macro: this file imports AppKit
+// as well as SwiftUI, and both SwiftUI and DeveloperToolsSupport declare a
+// `Preview` type, so the macro is ambiguous here. The protocol is not.
+struct PillPreviews: PreviewProvider {
+    static var previews: some View {
+        Group {
+            OverlayContentView(model: PillPreviewHost.recording)
+                .previewDisplayName("Recording")
+            OverlayContentView(model: PillPreviewHost.transcribing)
+                .previewDisplayName("Transcribing")
+        }
+        .frame(width: 320, height: 80)
+    }
+}
+
+#endif
