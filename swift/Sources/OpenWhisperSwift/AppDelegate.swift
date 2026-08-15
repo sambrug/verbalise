@@ -722,6 +722,19 @@ extension AppDelegate: SettingsDelegate {
         // same files would only race the first. note(downloads:)/(prepares:)
         // pick each up the moment it finishes.
         let modelChanged = old.transcriptionModel != newSettings.transcriptionModel
+
+        // Switching away mid-compile abandons the engine's load, but not the
+        // compile: hand it to the background preparer, so the tier keeps its
+        // "Compiling…" row in the pane — the same way a background download
+        // keeps its bar — and its place in the pipeline. The preparer's work
+        // mostly lands in macOS's cache warm from the abandoned load, so this
+        // costs little and makes the finish observable (the stamp, the row
+        // clearing, the fast load if the user switches back).
+        if modelChanged, enginePhase == .preparing {
+            let abandoned = old.transcriptionModel
+            Task { await preparer.prepare(abandoned) }
+        }
+
         Task { [engine, controller, newSettings] in
             await engine?.apply(settings: newSettings)
             await controller?.apply(settings: newSettings)
