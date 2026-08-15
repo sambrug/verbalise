@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Create a per-machine self-signed code-signing certificate for Open Whisper.
+# Create a per-machine self-signed code-signing certificate for Verbalise.
 #
 # Why: macOS ties Accessibility (and other TCC) grants to the app's code
 # signature. Unsigned builds get a fresh ad-hoc signature every time, so
@@ -13,7 +13,7 @@
 # password when trusting the certificate; that's expected.
 set -euo pipefail
 
-IDENTITY="Open Whisper Dev"
+IDENTITY="Verbalise Dev"
 KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
 
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
@@ -30,7 +30,7 @@ distinguished_name = dn
 x509_extensions = ext
 prompt = no
 [dn]
-CN = Open Whisper Dev
+CN = Verbalise Dev
 [ext]
 keyUsage = critical,digitalSignature
 extendedKeyUsage = critical,codeSigning
@@ -44,11 +44,11 @@ openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
 # Legacy PBE algorithms: OpenSSL 3.x defaults to AES/PBKDF2, which macOS's
 # `security import` can't parse ("MAC verification failed").
 openssl pkcs12 -export -inkey "$TMP/key.pem" -in "$TMP/cert.pem" \
-    -out "$TMP/cert.p12" -passout pass:openwhisper \
+    -out "$TMP/cert.p12" -passout pass:verbalise \
     -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1
 
 echo "==> Importing into login Keychain..."
-security import "$TMP/cert.p12" -k "$KEYCHAIN" -P openwhisper -T /usr/bin/codesign
+security import "$TMP/cert.p12" -k "$KEYCHAIN" -P verbalise -T /usr/bin/codesign
 
 echo "==> Trusting for code signing (macOS will ask for your login password)..."
 security add-trusted-cert -r trustRoot -p codeSign -k "$KEYCHAIN" "$TMP/cert.pem"

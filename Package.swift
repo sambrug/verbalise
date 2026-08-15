@@ -1,6 +1,6 @@
 // swift-tools-version: 6.0
 //
-// Open Whisper (Swift). See ../swift_migration_plan.md.
+// Verbalise — on-device dictation for macOS.
 //
 // SwiftPM rather than an .xcodeproj is deliberate: this machine has only the
 // Command Line Tools, so `xcodebuild` does not exist. Everything the app needs
@@ -15,16 +15,16 @@
 import PackageDescription
 
 let package = Package(
-    name: "OpenWhisperSwift",
+    name: "Verbalise",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "OpenWhisperSwift", targets: ["OpenWhisperSwift"]),
-        .library(name: "OpenWhisperCore", targets: ["OpenWhisperCore"]),
+        .executable(name: "Verbalise", targets: ["Verbalise"]),
+        .library(name: "VerbaliseCore", targets: ["VerbaliseCore"]),
         // A product, not just a target, so the Xcode app target can depend on
         // it. project.yml consumes this package rather than re-listing its
         // sources, which is what stops the two builds disagreeing about what
         // the modules are.
-        .library(name: "OpenWhisperSpeech", targets: ["OpenWhisperSpeech"]),
+        .library(name: "VerbaliseSpeech", targets: ["VerbaliseSpeech"]),
     ],
     dependencies: [
         // WhisperKit. `argmaxinc/argmax-oss-swift` and `argmaxinc/WhisperKit`
@@ -41,27 +41,27 @@ let package = Package(
         // Deliberately dependency-free: the recovery tests exercise this
         // module and must stay fast to build and run. Nothing here should
         // ever import WhisperKit.
-        .target(name: "OpenWhisperCore"),
+        .target(name: "VerbaliseCore"),
 
         // The WhisperKit adapter, isolated so the heavy dependency stays out
         // of the logic module and its test cycle.
         .target(
-            name: "OpenWhisperSpeech",
+            name: "VerbaliseSpeech",
             dependencies: [
-                "OpenWhisperCore",
+                "VerbaliseCore",
                 .product(name: "WhisperKit", package: "WhisperKit"),
             ]
         ),
 
         // Thin shell: lifecycle, wiring, and the AppKit surface.
         .executableTarget(
-            name: "OpenWhisperSwift",
-            dependencies: ["OpenWhisperCore", "OpenWhisperSpeech"]
+            name: "Verbalise",
+            dependencies: ["VerbaliseCore", "VerbaliseSpeech"]
         ),
 
         .testTarget(
-            name: "OpenWhisperCoreTests",
-            dependencies: ["OpenWhisperCore"],
+            name: "VerbaliseCoreTests",
+            dependencies: ["VerbaliseCore"],
             resources: [.copy("Fixtures")]
         ),
     ],

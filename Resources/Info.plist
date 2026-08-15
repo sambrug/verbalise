@@ -5,15 +5,15 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleExecutable</key>
-	<string>OpenWhisperSwift</string>
+	<string>Verbalise</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.sambruggen.openwhisper</string>
+	<string>com.sambruggen.verbalise</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Open Whisper</string>
+	<string>Verbalise</string>
 	<key>CFBundleDisplayName</key>
-	<string>Open Whisper</string>
+	<string>Verbalise</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -45,7 +45,7 @@
 	<true/>
 
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Open Whisper records audio from your microphone while you hold the trigger key, and transcribes it on this Mac.</string>
+	<string>Verbalise records audio from your microphone while you hold the trigger key, and transcribes it on this Mac.</string>
 
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 Sam Bruggen</string>

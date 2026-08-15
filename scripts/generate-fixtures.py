@@ -23,7 +23,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import daemon  # noqa: E402
 
-OUT = REPO_ROOT / "swift/Tests/OpenWhisperCoreTests/Fixtures/text-pipeline.json"
+OUT = REPO_ROOT / "Tests/VerbaliseCoreTests/Fixtures/text-pipeline.json"
 
 # --- Inputs -----------------------------------------------------------------
 

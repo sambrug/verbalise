@@ -1,12 +1,12 @@
 #!/bin/bash
 #
-# Build OpenWhisperSwift.app: compile, assemble the bundle, sign it sandboxed.
+# Build Verbalise.app: compile, assemble the bundle, sign it sandboxed.
 #
 # This does by hand what `xcodebuild` would do from an .xcodeproj. There is no
 # Xcode on this machine (Command Line Tools only), and none of the three steps
 # needs it -- swiftc, the bundle layout, and codesign are all CLT tools.
 #
-# Signing uses the same local "Open Whisper Dev" identity as the Python app
+# Signing uses a stable local "Verbalise Dev" identity
 # (scripts/create-signing-cert.sh) so that TCC grants -- Input Monitoring and
 # PostEvent, which are the expensive ones for the user to re-grant -- survive
 # rebuilds instead of being voided by a fresh ad-hoc signature each time.
@@ -16,9 +16,9 @@ cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"
 
 CONFIG="${CONFIG:-release}"
-APP_NAME="OpenWhisperSwift"
+APP_NAME="Verbalise"
 BUNDLE="build/${APP_NAME}.app"
-IDENTITY="${SIGN_IDENTITY:-Open Whisper Dev}"
+IDENTITY="${SIGN_IDENTITY:-Verbalise Dev}"
 
 if ! security find-identity -v -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
     echo "error: signing identity '$IDENTITY' not found." >&2
@@ -47,8 +47,8 @@ cp "Resources/PrivacyInfo.xcprivacy" "$BUNDLE/Contents/Resources/PrivacyInfo.xcp
 # source covers the whole deployment range.
 #
 # actool ships with Xcode. Without Xcode the build still works and falls back
-# to the flat icon the Python app uses, so Command Line Tools remain enough to
-# build a running app.
+# to the flat committed icon, so Command Line Tools remain enough to build a
+# running app.
 if [ -d "Resources/AppIcon.icon" ] && xcrun --find actool >/dev/null 2>&1; then
     ICON_WORK="$(mktemp -d)"
     # Both paths absolute. actool resolves relative paths against something
@@ -71,11 +71,11 @@ if [ -d "Resources/AppIcon.icon" ] && xcrun --find actool >/dev/null 2>&1; then
 elif [ -f "Resources/AppIcon-fallback.icns" ]; then
     # Same artwork, flat. actool emits this alongside the Assets.car, and the
     # copy is committed so a machine without Xcode still ships the current
-    # icon rather than whatever the Python app happens to be using.
+    # icon rather than none at all.
     #
     # Regenerate it after changing AppIcon.icon:
-    #   ./Scripts/build-app.sh && cp \
-    #     build/OpenWhisperSwift.app/Contents/Resources/AppIcon.icns \
+    #   ./scripts/build-app.sh && cp \
+    #     build/Verbalise.app/Contents/Resources/AppIcon.icns \
     #     Resources/AppIcon-fallback.icns
     cp "Resources/AppIcon-fallback.icns" "$BUNDLE/Contents/Resources/AppIcon.icns"
     /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" \
@@ -86,7 +86,7 @@ fi
 
 # The bundled speech model, if it has been staged. Absent in a normal
 # development build, which falls back to downloading on demand rather than
-# making every rebuild copy a gigabyte around. Run Scripts/fetch-default-model.sh
+# making every rebuild copy a gigabyte around. Run scripts/fetch-default-model.sh
 # before a release or App Store archive.
 if [ -d "Resources/Models" ] && [ -n "$(ls -A Resources/Models 2>/dev/null)" ]; then
     echo "    including bundled model ($(du -sh Resources/Models | cut -f1))"

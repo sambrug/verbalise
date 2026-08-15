@@ -20,10 +20,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-APP="build/OpenWhisperSwift.app"
-BINARY="$APP/Contents/MacOS/OpenWhisperSwift"
+APP="build/Verbalise.app"
+BINARY="$APP/Contents/MacOS/Verbalise"
 DEST="Resources/Models"
-CONTAINER="$HOME/Library/Containers/com.sambruggen.openwhisper/Data/Library/Application Support/Models/models/argmaxinc/whisperkit-coreml"
+CONTAINER="$HOME/Library/Containers/com.sambruggen.verbalise/Data/Library/Application Support/Models/models/argmaxinc/whisperkit-coreml"
 
 if [ ! -x "$BINARY" ]; then
     echo "error: $BINARY not found. Run ./Scripts/build-app.sh first." >&2
