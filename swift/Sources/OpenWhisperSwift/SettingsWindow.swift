@@ -182,13 +182,18 @@ enum SettingsPane: String, CaseIterable, Identifiable, Hashable {
     }
 
     /// The tinted rounded square System Settings puts beside every row.
+    ///
+    /// Permissions is red rather than another neutral. It was `.secondary`,
+    /// which rendered so close to General's `.gray` that the first and last
+    /// rows read as a matched pair for no reason -- and of the five, it is the
+    /// one whose row can be broken.
     var tint: Color {
         switch self {
         case .general: .gray
         case .dictation: .orange
         case .speechModel: .purple
         case .vocabulary: .brown
-        case .permissions: .secondary
+        case .permissions: .red
         }
     }
 }

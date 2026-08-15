@@ -206,21 +206,31 @@ struct PillBarsView: View {
 /// desktop. This is the same trick with the macOS 26 material.
 @available(macOS 26.0, *)
 struct AppKitGlassView: NSViewRepresentable {
-    var style: NSGlassEffectView.Style = .clear
-    /// nil keeps the capsule: half the view's height, applied on layout.
-    var cornerRadius: CGFloat?
+    var style: NSGlassEffectView.Style = .regular
+    var tint: NSColor?
 
-    func makeNSView(context: Context) -> NSGlassEffectView {
-        let view = NSGlassEffectView()
-        view.style = style
-        return view
+    func makeNSView(context: Context) -> CapsuleGlassView {
+        CapsuleGlassView()
     }
 
-    func updateNSView(_ view: NSGlassEffectView, context: Context) {
+    func updateNSView(_ view: CapsuleGlassView, context: Context) {
         view.style = style
-        // A capsule is a corner radius of half the height. Recomputed on every
-        // update because the pill's height is content-driven.
-        view.cornerRadius = cornerRadius ?? (view.bounds.height / 2)
+        view.tintColor = tint
+    }
+}
+
+/// Glass that stays a capsule.
+///
+/// The radius has to be set from `layout`, not when SwiftUI configures the
+/// view. At configuration time the bounds are still zero, so half the height
+/// is zero, and the pill comes out square -- which is what happened the moment
+/// a redundant `clipShape` stopped hiding it. `layout` runs once the view has
+/// a real size, and again whenever that size changes.
+@available(macOS 26.0, *)
+final class CapsuleGlassView: NSGlassEffectView {
+    override func layout() {
+        super.layout()
+        cornerRadius = bounds.height / 2
     }
 }
 
@@ -250,6 +260,15 @@ struct OverlayContentView: View {
     @ObservedObject var model: OverlayModel
 
     private let cyan = Color(red: 10 / 255, green: 170 / 255, blue: 210 / 255)
+
+    /// A cool cast on the glass, kept far below the point of looking coloured.
+    ///
+    /// The alpha is the strength: `tintColor` pulls the material toward this
+    /// colour rather than painting it, so anything approaching a normal opacity
+    /// reads as a blue pill instead of glass with a temperature.
+    private static let glassTint = NSColor(
+        srgbRed: 0.62, green: 0.78, blue: 1.0, alpha: 0.07
+    )
 
     private let iconWidth: CGFloat = 20
     private let timerWidth: CGFloat = 38
@@ -313,7 +332,7 @@ struct OverlayContentView: View {
                 // cuts into the specular edge the material draws just inside
                 // its own bounds -- which is the bevel this was all for.
                 pill.background {
-                    AppKitGlassView(style: .clear)
+                    AppKitGlassView(style: .regular, tint: Self.glassTint)
                         .allowsHitTesting(false)
                 }
             } else {
