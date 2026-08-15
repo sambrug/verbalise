@@ -24,6 +24,9 @@ protocol SettingsDelegate: AnyObject {
     var modelDownloads: [TranscriptionModel: Double?] { get }
     /// Models queued or running in the first-use Neural Engine compile queue.
     var compilingModels: Set<TranscriptionModel> { get }
+    /// The last download/compile failure per tier, cleared when a retry
+    /// starts. Shown inline on the row.
+    var modelFailures: [TranscriptionModel: String] { get }
     func downloadModel(_ model: TranscriptionModel)
     func cancelModelDownload(_ model: TranscriptionModel)
     /// Deletes a downloaded model. Only ever called for one not in use.
@@ -264,7 +267,8 @@ final class SettingsModel: ObservableObject {
             downloaded: delegate.downloadedModels,
             downloading: delegate.modelDownloads,
             removable: delegate.removableModels,
-            compiling: delegate.compilingModels
+            compiling: delegate.compilingModels,
+            failures: delegate.modelFailures
         )
         inputDevices = AudioDevices.inputDevices().map(\.name)
         launchesAtLogin = LoginItem.isEnabled

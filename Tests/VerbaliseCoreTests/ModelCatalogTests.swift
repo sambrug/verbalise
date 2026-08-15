@@ -201,6 +201,23 @@ struct ModelCatalogTests {
         #expect(fast?.detail.hasSuffix("Downloading…") == true)
     }
 
+    @Test("A failed attempt keeps its message on the row until a retry starts")
+    func failureShowsOnItsRow() {
+        // A failed download that silently flips back to "Download" looks like
+        // the click never registered. The row keeps the reason, and the
+        // Download button doubles as the retry.
+        let rows = ModelCatalog.rows(
+            active: .balanced,
+            downloaded: [.balanced],
+            failures: [.accurate: "The Internet connection appears to be offline."]
+        )
+        let accurate = rows.first { $0.model == .accurate }
+        #expect(accurate?.failure == "The Internet connection appears to be offline.")
+        #expect(accurate?.action == .download)
+        // Only the tier that failed carries the message.
+        #expect(rows.first { $0.model == .balanced }?.failure == nil)
+    }
+
     @Test("A development build with nothing on disk offers all three")
     func nothingDownloadedOffersEverything() {
         // The bundled tier is only bundled in a release build; a dev build

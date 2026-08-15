@@ -136,8 +136,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// same place.
     private var provisions: [TranscriptionModel: Task<Void, Never>] = [:]
 
+    /// The last failed attempt per tier, for the pane's inline message.
+    /// Cleared the moment a retry starts, so the row never shows yesterday's
+    /// error over today's progress bar.
+    private(set) var modelFailures: [TranscriptionModel: String] = [:]
+
+    /// Which tier the menu's alert row is currently blaming, so a later
+    /// success clears exactly that alert and never someone else's.
+    private var alertedModelFailure: TranscriptionModel?
+
     private func provision(_ model: TranscriptionModel) {
         guard provisions[model] == nil else { return }
+        modelFailures[model] = nil
+        SettingsWindow.refreshIfOpen()
         provisions[model] = Task { [downloader, preparer] in
             var failure: String?
             var wasCancelled = false
@@ -163,9 +174,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if let failure {
             // Not fatal: the files are retried on the next ask — a keypress,
-            // a re-click of Download, the next launch.
+            // a re-click of Download, the next launch. But it must be seen:
+            // inline on the tier's row, and — when it blocks the model the
+            // user is waiting on — as the menu's alert row too.
             log("model: provisioning \(model.rawValue) failed — \(failure)")
+            modelFailures[model] = failure
+            if model == settings.transcriptionModel {
+                menu?.show(alert: "Couldn't get \(model.displayName) ready — \(failure)")
+                alertedModelFailure = model
+            }
             return
+        }
+        if alertedModelFailure == model {
+            menu?.clearAlert()
+            alertedModelFailure = nil
         }
         if cancelled {
             // Cancelling the switch target's download is cancelling the
@@ -736,6 +758,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 showCompilingStatus()
             } else if enginePhase == .loading {
                 menu?.show(status: "Loading model…")
+            } else if dictationGated {
+                // Nothing is running and the key would still be refused — a
+                // failed provision (the alert row has the specifics), or work
+                // that hasn't started. "Ready — hold X" here would be a lie
+                // the very next keypress exposes.
+                menu?.show(status: "\(activeModel.displayName) isn't ready")
             } else {
                 menu?.show(state: .idle)
             }

@@ -373,6 +373,19 @@ private struct ModelRowView: View {
                     // apparent silence as work; the footer below the list says
                     // what the work is.
                     ProgressView().progressViewStyle(.linear).controlSize(.small)
+                } else if let failure = row.failure {
+                    // The same triangle the menu's alert row uses, so a
+                    // failure looks like one thing across the app. The
+                    // Download button doubles as the retry; a failure row
+                    // that only stated the problem would leave the fix to be
+                    // guessed.
+                    Label {
+                        Text(failure).foregroundStyle(.secondary)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                    .font(.subheadline)
                 }
             }
 
@@ -785,6 +798,7 @@ private final class PreviewDelegate: SettingsDelegate {
     var modelDownloads: [TranscriptionModel: Double?] = [.accurate: 0.62]
     var removableModels: Set<TranscriptionModel> = []
     var compilingModels: Set<TranscriptionModel> = []
+    var modelFailures: [TranscriptionModel: String] = [:]
 
     let inputPreview = InputPreview()
 

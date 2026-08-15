@@ -38,14 +38,23 @@ public struct ModelRow: Equatable, Sendable {
     /// fresh install work with no network.
     public let isRemovable: Bool
 
+    /// Why the last download or compile attempt failed, if it did. Shown
+    /// inline on the row until a retry starts: a failed download that just
+    /// flips back to a "Download" button looks like the click never
+    /// registered, which teaches people the button is broken rather than the
+    /// network was.
+    public let failure: String?
+
     public init(
         model: TranscriptionModel,
         availability: ModelAvailability,
-        isRemovable: Bool = false
+        isRemovable: Bool = false,
+        failure: String? = nil
     ) {
         self.model = model
         self.availability = availability
         self.isRemovable = isRemovable
+        self.failure = failure
     }
 
     public var title: String { model.displayName }
@@ -155,12 +164,15 @@ public enum ModelCatalog {
     ///     of `downloaded`: the bundled tier is present but not removable.
     ///   - compiling: models queued or running in the first-use Neural Engine
     ///     compile queue.
+    ///   - failures: the last download/compile failure per tier, cleared when
+    ///     a retry starts.
     public static func rows(
         active: TranscriptionModel,
         downloaded: Set<TranscriptionModel>,
         downloading: [TranscriptionModel: Double?] = [:],
         removable: Set<TranscriptionModel> = [],
-        compiling: Set<TranscriptionModel> = []
+        compiling: Set<TranscriptionModel> = [],
+        failures: [TranscriptionModel: String] = [:]
     ) -> [ModelRow] {
         TranscriptionModel.allCases.map { model in
             ModelRow(
@@ -172,7 +184,8 @@ public enum ModelCatalog {
                     downloading: downloading,
                     compiling: compiling
                 ),
-                isRemovable: removable.contains(model)
+                isRemovable: removable.contains(model),
+                failure: failures[model]
             )
         }
     }
