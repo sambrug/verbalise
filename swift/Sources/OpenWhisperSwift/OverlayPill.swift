@@ -250,13 +250,6 @@ struct OverlayContentView: View {
 
     private let cyan = Color(red: 10 / 255, green: 170 / 255, blue: 210 / 255)
 
-    /// How much of the glass material is drawn. 1.0 is full strength.
-    ///
-    /// `.regular` is the thick variant, chosen for its edge lensing; this takes
-    /// some of its density back without giving up the bevel that `.clear`
-    /// cannot produce.
-    private static let glassStrength: Double = 0.75
-
     private let iconWidth: CGFloat = 20
     private let timerWidth: CGFloat = 38
 
@@ -307,38 +300,19 @@ struct OverlayContentView: View {
 
         Group {
             if #available(macOS 26.0, *) {
-                // `.regular`, the standard Liquid Glass material.
+                // AppKit's glass, not SwiftUI's -- see AppKitGlassView for the
+                // reasoning, which is the one thing in this file worth reading
+                // before changing it again.
                 //
-                // This went `.regular` -> `.clear` -> back again, and the round
-                // trip is the useful part. `.clear` is the most transmissive
-                // variant Apple ships, so it shows the most desktop -- but it
-                // is also thin, and the edge lensing that makes glass read as
-                // a physical object is a property of the material's thickness.
-                // Wanting "more bevel" and "more clarity" at once is wanting
-                // two ends of one dial. `.regular` picks the bevel.
+                // Behind the content rather than wrapping it, so the text and
+                // bars stay at full strength whatever the material does.
                 //
-                // There is no bevel parameter to reach for instead: the Glass
-                // API offers the variant, `.tint` and `.interactive`, and
-                // nothing else. Anything more would have to be a painted-on
-                // rim, which is not refraction and looks like it.
-                //
-                // Fading the material is not a third option either -- it makes
-                // the pill paler rather than clearer, since the refraction
-                // weakens along with everything else. Tried twice, reverted
-                // twice.
-                //
-                // GlassEffectContainer lets the system render the shape as one
-                // continuous glass surface; without it each glass view is
-                // sampled independently and the effect flattens.
-                // `.interactive()` adds the responsive light play.
-                // AppKit's glass, not SwiftUI's. See AppKitGlassView for why.
-                //
-                // Behind the content rather than wrapping it, which is what
-                // lets the text and bars stay at full strength regardless of
-                // what the material is doing.
+                // No clipShape. NSGlassEffectView shapes itself through
+                // cornerRadius, and clipping it to a capsule on top of that
+                // cuts into the specular edge the material draws just inside
+                // its own bounds -- which is the bevel this was all for.
                 pill.background {
                     AppKitGlassView(style: .clear)
-                        .clipShape(.capsule)
                         .allowsHitTesting(false)
                 }
             } else {
