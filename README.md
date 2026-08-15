@@ -145,9 +145,3 @@ needed for an App Store archive.
 `daemon.py`, `menubar.py` and the py2app build in the repo root are the
 original implementation. It's deprecated — still runnable via `make app`, but
 no longer developed.
-
-It stays in the tree because `swift/Scripts/generate-fixtures.py` runs it to
-generate the fixtures the Swift tests check their text pipeline against.
-
-Don't run both at once. They listen for the same key, so you'd get two
-recordings and two insertions.
