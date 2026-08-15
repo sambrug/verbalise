@@ -149,9 +149,13 @@ struct PillBarsView: View {
     // states. The natural bar-content widths (98 and 138) differ by 40pt;
     // the timer slot is 38pt. Bumping the recording frame by 2pt of trailing
     // slack closes that 2pt gap, so:
-    //   recording: icon(16) + 10 + timer(38) + 10 + bars(100) = 174pt
-    //   resting:   icon(16) + 10 + timer( 0) + 10 + bars(138) = 174pt
+    //   recording: icon(20) + 10 + timer(38) + 10 + bars(100) = 178pt
+    //   resting:   icon(20) + 10 + timer( 0) + 10 + bars(138) = 178pt
     // Identical pill widths means no panel resize is needed mid-session.
+    //
+    // The two 10s are the HStack spacing in OverlayContentView, written out
+    // again in pinnedContentWidth. Change the spacing and both have to move,
+    // or the pill's declared width stops matching what is inside it.
     static let recordingWidth: CGFloat = 100
     static var restingWidth: CGFloat {
         CGFloat(restingBars) * barWidth + CGFloat(restingBars - 1) * barSpacing
@@ -189,7 +193,7 @@ struct PillBarsView: View {
         }
         let phase = Double(index) / Double(Self.restingBars) * .pi * 3
         let h = (sin(time * 2.5 + phase) + 1) / 2
-        return (3 + CGFloat(h) * 14, 0.55)
+        return (3 + CGFloat(h) * 14, 0.85)
     }
 }
 
@@ -269,10 +273,10 @@ struct OverlayContentView: View {
                         .resizable()
                         .renderingMode(.template)
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 17.5, height: 17.5)
+                        .frame(width: 18.5, height: 18.5)
                 } else {
                     Image(systemName: model.sfSymbol)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 14, weight: .semibold))
                 }
             }
             .foregroundColor(iconColor)
@@ -287,7 +291,7 @@ struct OverlayContentView: View {
                 // which brings the slashed zero and the code-editor look with
                 // it. `.monospacedDigit()` asks for the same thing SF Pro
                 // already has: the tabular figures Apple uses for clocks.
-                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                .font(.system(size: 14, weight: .medium).monospacedDigit())
                 .foregroundColor(iconColor.opacity(0.85))
                 .frame(width: isRecording ? timerWidth : 0, alignment: .leading)
                 .opacity(isRecording ? 1 : 0)
