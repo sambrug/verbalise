@@ -27,11 +27,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// engine, which downloads only what it needs to transcribe right now.
     private lazy var downloader = ModelDownloader { inFlight in
         Task { @MainActor in
-            AppDelegate.shared?.cachedDownloads = inFlight
-            SettingsWindow.refreshIfOpen()
+            AppDelegate.shared?.note(downloads: inFlight)
         }
     }
     private var cachedDownloads: [TranscriptionModel: Double?] = [:]
+
+    private func note(downloads inFlight: [TranscriptionModel: Double?]) {
+        let finished = Set(cachedDownloads.keys).subtracting(inFlight.keys)
+        cachedDownloads = inFlight
+        SettingsWindow.refreshIfOpen()
+
+        // A fetch of the model in use just landed. Its first load is a
+        // multi-minute ANE compile, so start it now, while the user is still
+        // away, rather than on their next keypress -- otherwise an impatient
+        // quit-and-retry never converges on a working model (#8).
+        // `isDownloaded` filters out the other ways a download leaves
+        // `inFlight`: a cancel or a failure leaves no folder behind.
+        if finished.contains(settings.transcriptionModel),
+           TranscriptionEngine.isDownloaded(settings.transcriptionModel) {
+            preloadModel()
+        }
+    }
 
     private var cachedStats = UsageStats()
     private var cachedRecent: [RecentTranscript] = []
@@ -92,9 +108,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Same reasoning for the speech model: get it ready before the first
-        // keypress instead of during it. A model already on disk loads in a few
-        // seconds; one that needs fetching shows download progress in the menu
-        // and gates the trigger key until it lands.
+        // keypress instead of during it. A model already loaded once before
+        // takes a few seconds; one that needs fetching, or whose files have
+        // never been loaded (the multi-minute first-use ANE compile), shows
+        // its progress in the menu and gates the trigger key until it's done.
         preloadModel()
         startIdleTimer()
     }
@@ -344,24 +361,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // dictation gets it.
             inputPreview.stop()
 
-            // Refuse only while a download is in flight. Recording into a
-            // multi-minute fetch produces a dictation that looks hung, and the
+            // Refuse while the model cannot transcribe yet. Recording into a
+            // multi-minute wait produces a dictation that looks hung, and the
             // user has no way to tell it apart from a crash — better to say so
-            // and let them try again in a moment.
-            if case .downloading = enginePhase {
+            // and let them try again in a moment. Two waits qualify: a
+            // download, and the ANE compile on the first load of freshly
+            // downloaded files. A *cached* load stays ungated — it takes a few
+            // seconds, which is time the user spends speaking anyway.
+            let model = settings.transcriptionModel
+            var downloading = cachedDownloads.keys.contains(model)
+            if case .downloading = enginePhase { downloading = true }
+            if downloading {
                 log("dictation: refused, model still downloading")
-                menu?.show(alert: "Still downloading the speech model. Dictation will work once it's done.")
+                refuse(with: "Still downloading the speech model. Dictation will work once it's done.")
+                return
+            }
+            // Asked of the stamp rather than the phase, because the phase
+            // cannot warn about work that has not started yet: the compile may
+            // still be queued behind a preload, or not be underway at all.
+            if enginePhase != .ready, !TranscriptionEngine.isPrepared(model) {
+                log("dictation: refused, model needs its first-use preparation")
+                refuse(with: "Preparing the speech model for first use — a one-off step "
+                    + "that can take several minutes. Leave Open Whisper running; "
+                    + "dictation will work once it's done.")
+                // Make sure that preparation is actually underway. Repeat
+                // presses join the load already in flight.
+                preloadModel()
                 return
             }
             if settings.soundEnabled { Sounds.playStart() }
 
             Task {
                 // Load in parallel with the recording rather than after it.
-                // A model already on disk takes a few seconds, which is time
-                // the user spends speaking anyway — so by the time they let go
-                // it is usually ready and the wait disappears entirely. The
-                // status line notices on its own ("Recording… (waking speech
-                // model)") via refreshStatusLine.
+                // Only ever a cached load by this point — the gate above
+                // refused anything slower — so it takes a few seconds, which
+                // is time the user spends speaking anyway; by the time they
+                // let go it is usually ready and the wait disappears entirely.
+                // The status line notices on its own ("Recording… (waking
+                // speech model)") via refreshStatusLine.
                 if await !engine.isLoaded {
                     Task.detached { try? await engine.ensureLoaded() }
                 }
@@ -372,6 +409,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if settings.soundEnabled { Sounds.playStop() }
             Task { await controller.stopAndTranscribe() }
         }
+    }
+
+    /// Whether the last alert shown was a "not ready yet" refusal, so it can
+    /// be taken down the moment the model is ready rather than lingering,
+    /// minutes stale, until the next successful dictation clears it.
+    private var refusedWhileUnready = false
+
+    private func refuse(with message: String) {
+        refusedWhileUnready = true
+        menu?.show(alert: message)
     }
 
     // MARK: - Events
@@ -424,9 +471,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func show(phase: TranscriptionEngine.Phase) {
         enginePhase = phase
         switch phase {
-        case .downloading, .loading:
+        case .downloading, .preparing, .loading:
             break
         case .ready:
+            // Whatever a refusal said about waiting is over now.
+            if refusedWhileUnready {
+                refusedWhileUnready = false
+                menu?.clearAlert()
+            }
             // The idle countdown starts from the moment there is something to
             // unload, not from launch.
             Task { await lifecycle.noteLoaded() }
@@ -463,6 +515,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .downloading(let fraction):
                 menu?.show(status: fraction.map { "Downloading model \(Int($0 * 100))%" }
                     ?? "Downloading model…")
+            case .preparing:
+                menu?.show(status: "Preparing model for first use…")
             case .loading:
                 menu?.show(status: "Loading model…")
             case .ready, .idle:
@@ -581,9 +635,20 @@ extension AppDelegate: SettingsDelegate {
             log("config: audio input changed, rebuilding the session")
         }
 
+        // preloadModel's doc promised "after a model change" from the start,
+        // but nothing called it — so a switched model sat unloaded until the
+        // next keypress, and if its files had never been loaded before, that
+        // keypress ran into the full first-use compile. Only when the files
+        // are already on disk: selecting an absent tier starts a
+        // ModelDownloader fetch (SettingsWindow.select), and the engine
+        // starting a second download into the same folder would race it.
+        let modelChanged = old.transcriptionModel != newSettings.transcriptionModel
         Task { [engine, controller, newSettings] in
             await engine?.apply(settings: newSettings)
             await controller?.apply(settings: newSettings)
+            if modelChanged, TranscriptionEngine.isDownloaded(newSettings.transcriptionModel) {
+                AppDelegate.shared?.preloadModel()
+            }
         }
 
         if audioChanged {

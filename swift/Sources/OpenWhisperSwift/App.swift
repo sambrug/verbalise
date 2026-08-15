@@ -73,6 +73,9 @@ enum OpenWhisperApp {
                     } else {
                         print("  downloading…")
                     }
+                case .preparing:
+                    print("  preparing for first use (compiling for the Neural Engine — "
+                          + "this can take several minutes)…")
                 case .loading: print("  loading…")
                 case .ready: print("  ready")
                 case .idle: break

@@ -13,6 +13,12 @@ public actor TranscriptionEngine: Transcriber {
         case idle
         /// 0...1, or nil while the total size is still unknown.
         case downloading(Double?)
+        /// The first load of these model files: CoreML is compiling them for
+        /// the Neural Engine, which takes minutes, not the seconds `loading`
+        /// implies. A separate phase because the two deserve opposite UI --
+        /// dictation can ride out a cached load, but recording into a compile
+        /// produces a dictation that looks hung (#8).
+        case preparing
         case loading
         case ready
     }
@@ -81,6 +87,20 @@ public actor TranscriptionEngine: Transcriber {
     /// Which tiers are on disk right now.
     public nonisolated static var downloadedModels: Set<TranscriptionModel> {
         Set(TranscriptionModel.allCases.filter(isDownloaded))
+    }
+
+    /// Whether a tier's files have been loaded once before, so the ANE
+    /// compile is behind them and the next load takes seconds.
+    ///
+    /// `nonisolated` for the same reason as `isDownloaded`: the answer is a
+    /// question about the filesystem and stored stamps, not actor state, and
+    /// the caller that gates the trigger key cannot wait on a loading actor
+    /// to answer it.
+    public nonisolated static func isPrepared(_ model: TranscriptionModel) -> Bool {
+        guard let folder = existingFolder(for: model.whisperKitModelName) else { return false }
+        return ModelPreparationStamp.isPrepared(
+            variant: model.whisperKitModelName, folder: folder
+        )
     }
 
     /// Which tiers can be deleted to reclaim space.
@@ -233,7 +253,17 @@ public actor TranscriptionEngine: Transcriber {
             )
         }
 
-        onPhase(.loading)
+        // A first load of these files is an ANE compile measured in minutes;
+        // say so, both to the UI and to the log -- "loaded cold in 3.8s" and
+        // "loaded cold in 8 minutes" are different events, and telling them
+        // apart is what the stamp exists for (#8).
+        let prepared = ModelPreparationStamp.isPrepared(variant: variant, folder: folder)
+        if prepared {
+            onPhase(.loading)
+        } else {
+            log("model: first load of \(variant), compiling for the Neural Engine")
+            onPhase(.preparing)
+        }
         let loadStarted = Date()
         let config = WhisperKitConfig(
             modelFolder: folder.path,
@@ -251,19 +281,27 @@ public actor TranscriptionEngine: Transcriber {
         whisperKit = loaded
         loadedModel = model
 
+        // Only after the whole load, prewarm included, has survived: the
+        // compile is finished, so from here these files really do load in
+        // seconds.
+        ModelPreparationStamp.recordPrepared(variant: variant, folder: folder)
+
         // Performance parity with the Python (commit c778fd6), which logged
         // cold vs warm load separately. Peak GPU memory was MLX-specific and
         // has no WhisperKit equivalent, so it is simply not logged.
+        // "first" marks a load that included the ANE compile, so its number is
+        // never mistaken for what a routine load costs.
         let loadSeconds = Date().timeIntervalSince(loadStarted)
+        let temperature = prepared ? (wasCold ? "cold" : "warm") : "first"
         if downloadSeconds > 0 {
             log(String(
                 format: "model: %@ downloaded in %.0fs, loaded %@ in %.2fs",
-                variant, downloadSeconds, wasCold ? "cold" : "warm", loadSeconds
+                variant, downloadSeconds, temperature, loadSeconds
             ))
         } else {
             log(String(
                 format: "model: %@ loaded %@ in %.2fs",
-                variant, wasCold ? "cold" : "warm", loadSeconds
+                variant, temperature, loadSeconds
             ))
         }
         onPhase(.ready)
