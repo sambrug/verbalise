@@ -256,9 +256,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keyTap?.stop()
         keyTap = nil
 
-        if !Permissions.hasInputMonitoring {
-            Permissions.requestInputMonitoring()
-        }
+        // Deliberately not requesting Input Monitoring here. This ran on every
+        // launch and could pop the OS's own permission prompt at the same
+        // moment `showIfPermissionsMissing` (applicationDidFinishLaunching)
+        // opens the Settings window's Permissions pane -- two things asking
+        // for the user's attention at once. The pane's own "Enable" button
+        // already calls `requestInputMonitoring()`; that is now the only
+        // place that does, so the prompt only ever appears from a click the
+        // user just made, inside the pane that explains it.
         guard let combo = settings.triggerCombo else {
             log("config: trigger_key '\(settings.triggerKey)' is invalid, key tap not started")
             menu?.show(alert: "'\(settings.triggerKey)' isn't a trigger key Open Whisper recognises.")
