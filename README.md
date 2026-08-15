@@ -1,173 +1,153 @@
 # Open Whisper
 
-Local voice dictation for macOS. Hold a key, speak, release — the text appears
-wherever you were typing.
+Hold a key, talk, let go. The text appears where you were typing.
 
-Transcription runs entirely on your Mac using [WhisperKit](https://github.com/argmaxinc/WhisperKit)
-and Apple's Neural Engine. No account, no API key, and nothing you dictate
-leaves the device.
+Everything runs on your Mac. No account, no API key, and nothing you say is
+sent anywhere.
 
-The app is a native Swift menu bar app, sandboxed, and lives in [`swift/`](swift/).
-There is also an older Python implementation in the repo root — see
-[Legacy Python implementation](#legacy-python-implementation) — which is
-**deprecated** and no longer developed.
+Requires macOS 14 or later on Apple Silicon.
 
-## Features
-
-- **Hold-to-dictate anywhere.** Hold a trigger key (default Right Shift; any
-  modifier or combination), speak, release. The transcript is typed into
-  whatever app has focus.
-- **Transcribes while you speak.** Long dictations are chunked at natural
-  pauses and transcribed in the background, so the wait after release stays at
-  a second or two however long you talked.
-- **Three speech models.** A balanced one ships inside the app and works
-  offline from first launch; a faster and a more accurate one download on
-  demand, with progress and a cancel.
-- **Custom vocabulary and corrections.** Bias recognition toward names,
-  acronyms and jargon, and replace words it consistently mishears.
-- **Cleans up after Whisper.** Silence artefacts ("thanks for watching",
-  trailing ellipses, stuck-word repetition) and subtitle annotations
-  (`[BLANK_AUDIO]`, `(air whooshing)`) are stripped before anything is typed.
-- **Careful with your clipboard.** Short transcripts are typed as keystrokes
-  and never touch it. Longer ones paste and restore what was there, and refuse
-  to paste the wrong thing if the clipboard changes mid-flight.
-- **Recording overlay.** A floating glass pill shows a live level meter and a
-  timer while recording, and a pulse while transcribing.
-- **Recovers from wedged audio.** Bounded, abandonable calls around every
-  CoreAudio operation, health checks on capture, and Escape to cancel.
-
-## Quick start
+## Install
 
 ```bash
-make swift-app       # build swift/build/OpenWhisperSwift.app
-make swift-install   # copy it to /Applications
+make swift-app
+make swift-install
 ```
 
-Open it, then grant the three permissions it asks for. A waveform icon appears
-in the menu bar. Hold your trigger key and speak.
+Open it, grant the three permissions it asks for, and a waveform icon appears
+in the menu bar.
 
-macOS keys permissions to an app's location, so **an app moved to
-/Applications needs its grants given again** — the installer says so when it
-runs.
+## Using it
 
-## Requirements
+Hold Right Shift, speak, release. Escape cancels without typing anything.
 
-- macOS 14 or later, Apple Silicon
-- Three permissions, each granted separately by you:
+Long dictations are transcribed in chunks while you talk, so the wait after
+you let go stays at a second or two however long you spoke.
 
-| Permission | Why |
-|---|---|
-| Microphone | Records while you hold the trigger key |
-| Input Monitoring | Notices the trigger key being held |
-| Accessibility | Types the transcript into the app you are using |
+The trigger key is configurable — any modifier, or a pair like Right Option +
+Right Shift.
 
-The Permissions pane in Settings explains each one and updates live as you
-grant them.
+## Permissions
+
+macOS asks for three, one at a time:
+
+- **Microphone** — records while you hold the key
+- **Input Monitoring** — notices the key being held
+- **Accessibility** — types the text into the app you're in
+
+Settings ▸ Permissions tracks all three and updates as you grant them.
+
+Grants are tied to where the app lives, so if you move it you'll be asked
+again.
 
 ## Settings
 
-⌘, from the menu bar icon. Five panes:
+⌘, from the menu bar icon.
 
-| Pane | Holds |
+| Pane | |
 |---|---|
-| General | Open at login, recording overlay, sounds, lifetime usage, config file, log, restart |
+| General | Login item, overlay, sounds, usage totals, config file, log |
 | Dictation | Trigger key, microphone, live input level |
-| Speech Model | The three tiers with download state, and the language |
-| Vocabulary | Terms to favour, and corrections |
-| Permissions | The three grants, polled live |
+| Speech Model | Which model, and the language |
+| Vocabulary | Terms to favour, and corrections for words it mishears |
+| Permissions | The three grants |
 
-Not every setting is in the window. Trim silence, streaming transcription and
-direct typing are optimisations with no upside when switched off, so they live
-in the configuration file rather than inviting people to make the app worse.
+Three models are available. Whisper Large v3 Turbo ships inside the app and
+works offline from first launch; Small and Large v3 download on demand.
 
 ## Configuration
 
-`~/Library/Containers/com.sambruggen.openwhisper/Data/Library/Application Support/config.json`,
-reachable from Settings ▸ General ▸ Open Configuration File.
+Settings ▸ General ▸ Open Configuration File, or:
 
-| Setting | Default | Description |
+```
+~/Library/Containers/com.sambruggen.openwhisper/Data/Library/Application Support/config.json
+```
+
+| Setting | Default | |
 |---|---|---|
 | `transcription_model` | `balanced` | `fast`, `balanced` or `accurate` |
 | `trigger_key` | `shift_r` | Single key or combination, e.g. `alt_r+shift_r` |
-| `language` | `en` | ISO 639-1 code, or `auto` to detect |
-| `min_duration` | `0.5` | Shorter recordings are discarded (seconds) |
-| `max_duration` | `300` | Auto-stops at this length (seconds) |
-| `release_delay` | `0.05` | Pause after release before inserting (seconds) |
-| `sample_rate` | `16000` | Audio sample rate |
-| `sound_enabled` | `false` | Tone on record start and stop |
-| `overlay_style` | `on` | Recording overlay: `on` or `off` |
+| `language` | `en` | ISO 639-1 code, or `auto` |
+| `min_duration` | `0.5` | Shorter recordings are discarded |
+| `max_duration` | `300` | Auto-stops at this length |
+| `release_delay` | `0.05` | Pause after release before inserting |
+| `sample_rate` | `16000` | |
+| `sound_enabled` | `false` | Tone on start and stop |
+| `overlay_style` | `on` | `on` or `off` |
 | `vocabulary` | `[]` | Terms to bias recognition toward |
 | `phonetic_corrections` | `{}` | Whole-word replacements applied after transcribing |
 | `input_device` | `null` | Microphone name; `null` follows the system default |
 
 Under `advanced:`
 
-| Setting | Default | Description |
+| Setting | Default | |
 |---|---|---|
-| `trim_silence_enabled` | `true` | Trim silence from each end before transcribing |
+| `trim_silence_enabled` | `true` | Trim silence from each end |
 | `streaming_transcribe_enabled` | `true` | Transcribe in chunks while you speak |
-| `model_idle_unload_minutes` | `120` | Release the model from memory after this long idle; `0` never |
-| `fast_typing_enabled` | `true` | Type short transcripts instead of pasting |
-| `fast_typing_max_chars` | `80` | Length threshold for the keystroke path |
+| `model_idle_unload_minutes` | `120` | Release the model from memory when idle; `0` never |
+| `fast_typing_enabled` | `true` | Type short results instead of pasting |
+| `fast_typing_max_chars` | `80` | Threshold for the keystroke path |
 | `clipboard_restore_delay` | `1.5` | Seconds before your clipboard is put back |
 
-Trigger keys are `shift_r`, `shift_l`, `ctrl_r`, `ctrl_l`, `alt_r`, `alt_l`,
-`cmd_r`, joined with `+` for a combination.
+Trigger keys: `shift_r`, `shift_l`, `ctrl_r`, `ctrl_l`, `alt_r`, `alt_l`,
+`cmd_r`. Join with `+` for a combination.
 
 ## Troubleshooting
 
-Settings ▸ General ▸ Show Log, or
-`~/Library/Containers/com.sambruggen.openwhisper/Data/Library/Logs/open-whisper-swift.log`.
+Settings ▸ General ▸ Show Log.
 
-- **The trigger key does nothing.** Input Monitoring is not granted, or was
-  granted after the app started. Check the Permissions pane.
-- **Recording, but nothing is typed.** Accessibility is not granted.
-- **First dictation after hours idle feels slow.** The model unloaded and is
-  reloading while you speak; the menu says so.
-- **The pill will not go away.** Press Escape.
+**The trigger key does nothing.** Input Monitoring isn't granted. Check
+Settings ▸ Permissions.
 
-Support flags on the binary:
+**It records but nothing is typed.** Accessibility isn't granted.
+
+**The first dictation after a few hours is slow.** The model unloaded and is
+reloading while you speak.
+
+**The pill won't go away.** Press Escape.
 
 ```bash
 BIN="/Applications/Open Whisper.app/Contents/MacOS/OpenWhisperSwift"
-$BIN --list-devices    # what CoreAudio can see, and the default
+$BIN --list-devices    # what CoreAudio can see
 $BIN --warm-model      # download and load the configured model
 $BIN --test-capture    # exercise the audio path with no keypress
-$BIN --settings        # launch with the Settings window open
+$BIN --settings        # launch with Settings open
 ```
 
 ## Development
 
 ```bash
-make swift-test        # the test suite
+make swift-test        # 194 tests
 make swift-run         # build and launch
 make swift-xcodeproj   # generate an .xcodeproj (needs xcodegen)
 ```
 
-SwiftPM is the build of record and needs no Xcode. The generated Xcode project
-is required only for an App Store archive, which SwiftPM cannot produce.
+SwiftPM builds and tests everything without Xcode. The Xcode project is only
+needed for an App Store archive.
 
-[`swift/README.md`](swift/README.md) is the developer detail: module layout,
-the dependency seams the recovery tests use, signing, model staging and the
-divergences from the Python app. [`swift/PORT_STATUS.md`](swift/PORT_STATUS.md)
-records what is verified and what is not.
-[`APP_STORE.md`](APP_STORE.md) covers submission.
+- [`swift/README.md`](swift/README.md) — module layout, signing, model
+  staging, and where this differs from the Python version
+- [`swift/PORT_STATUS.md`](swift/PORT_STATUS.md) — what's verified, what isn't
+- [`APP_STORE.md`](APP_STORE.md) — submission
 
-## Legacy Python implementation
+## Licence
 
-The original app — `daemon.py`, `menubar.py`, `overlay.swift` and the py2app
-build at the repo root — is **deprecated**. It still runs, and `make test`,
-`make app` and `make install` still build it, but it receives no further work
-and the Swift app supersedes it in every respect.
+[MIT](LICENSE).
 
-It stays in the tree for two reasons. `swift/Scripts/generate-fixtures.py` runs
-the real `daemon.py` to produce the fixtures that prove the port's text
-pipeline matches the original's output line for line; delete it and those can
-never be regenerated. And it is the reference for behaviour the Swift port
-deliberately changed, which `swift/README.md` lists.
+| | |
+|---|---|
+| [WhisperKit](https://github.com/argmaxinc/WhisperKit) | MIT, © 2024 argmax, inc. |
+| [swift-argument-parser](https://github.com/apple/swift-argument-parser) | Apache 2.0, © Apple Inc. |
+| Whisper models | MIT, © OpenAI |
 
-It cannot go to the App Store — py2app bundles are not submittable, which is
-what prompted the port.
+## The Python version
 
-Do not run both at once. They use separate bundle IDs and settings, but they
-listen for the same trigger key, so both would record and both would type.
+`daemon.py`, `menubar.py` and the py2app build in the repo root are the
+original implementation. It's deprecated — still runnable via `make app`, but
+no longer developed.
+
+It stays in the tree because `swift/Scripts/generate-fixtures.py` runs it to
+generate the fixtures the Swift tests check their text pipeline against.
+
+Don't run both at once. They listen for the same key, so you'd get two
+recordings and two insertions.
