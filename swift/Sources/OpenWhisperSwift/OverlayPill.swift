@@ -291,7 +291,7 @@ struct OverlayContentView: View {
                 // which brings the slashed zero and the code-editor look with
                 // it. `.monospacedDigit()` asks for the same thing SF Pro
                 // already has: the tabular figures Apple uses for clocks.
-                .font(.system(size: 14, weight: .medium).monospacedDigit())
+                .font(.system(size: 13, weight: .medium).monospacedDigit())
                 .foregroundColor(iconColor.opacity(0.85))
                 .frame(width: isRecording ? timerWidth : 0, alignment: .leading)
                 .opacity(isRecording ? 1 : 0)
