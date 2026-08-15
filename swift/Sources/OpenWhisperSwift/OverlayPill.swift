@@ -615,6 +615,7 @@ private enum PillPreviewHost {
         model.visible = true
         return model
     }()
+
 }
 
 // `PreviewProvider` rather than the `#Preview` macro: this file imports AppKit

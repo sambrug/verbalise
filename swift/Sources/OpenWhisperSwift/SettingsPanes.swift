@@ -286,6 +286,18 @@ private struct SpeechModelPane: View {
             } header: {
                 Text("Transcription runs on this Mac. Nothing you dictate leaves your device.")
                     .settingsFootnote()
+            } footer: {
+                // Only while it is happening: a permanent paragraph about a
+                // once-per-download event would be noise the rest of the time.
+                if model.rows.contains(where: \.isCompiling) {
+                    Text("macOS is compiling for the Neural Engine, which makes "
+                         + "transcription fast. It happens once after each "
+                         + "download and takes a few minutes. Compiling runs in "
+                         + "the background — you can keep dictating with any "
+                         + "model that's already ready. Leave Open Whisper "
+                         + "running.")
+                    .settingsFootnote()
+                }
             }
 
             Section {
@@ -339,6 +351,12 @@ private struct ModelRowView: View {
                     } else {
                         ProgressView().progressViewStyle(.linear).controlSize(.small)
                     }
+                } else if row.isCompiling {
+                    // Always indeterminate: macOS reports no progress for the
+                    // Neural Engine compile. The bar is here to show minutes of
+                    // apparent silence as work; the footer below the list says
+                    // what the work is.
+                    ProgressView().progressViewStyle(.linear).controlSize(.small)
                 }
             }
 
@@ -749,6 +767,7 @@ private final class PreviewDelegate: SettingsDelegate {
     var downloadedModels: Set<TranscriptionModel> = [.balanced]
     var modelDownloads: [TranscriptionModel: Double?] = [.accurate: 0.62]
     var removableModels: Set<TranscriptionModel> = []
+    var compilingModels: Set<TranscriptionModel> = []
 
     let inputPreview = InputPreview()
 

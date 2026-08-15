@@ -141,6 +141,49 @@ struct ModelCatalogTests {
         #expect(accurate?.badge == nil)
     }
 
+    @Test("A model mid first-use compile reads as compiling, not in use")
+    func compilingIsNotInUse() {
+        // Same honesty as the downloading case: "In use" on a model that
+        // cannot yet transcribe anything is what makes the multi-minute
+        // Neural Engine compile look like a hang.
+        let rows = ModelCatalog.rows(
+            selected: .balanced,
+            downloaded: [.balanced],
+            compiling: [.balanced]
+        )
+        let balanced = rows.first { $0.model == .balanced }
+        #expect(balanced?.availability == .compiling)
+        #expect(balanced?.badge == "Compiling…")
+        #expect(balanced?.action == nil)
+        #expect(balanced?.isCompiling == true)
+        #expect(balanced?.progress == nil, "the compile has no measurable progress")
+    }
+
+    @Test("The compile only marks the models actually compiling")
+    func compilingDoesNotSpread() {
+        let rows = ModelCatalog.rows(
+            selected: .balanced,
+            downloaded: [.balanced, .fast],
+            compiling: [.balanced]
+        )
+        #expect(rows.first { $0.model == .fast }?.availability == .ready)
+        #expect(rows.first { $0.model == .fast }?.isCompiling == false)
+    }
+
+    @Test("A background compile shows on a model that is not selected")
+    func backgroundCompileShows() {
+        // Downloads and compiles are background lifecycle steps: a tier can
+        // compile while dictation carries on with the current model, and the
+        // pane must show that rather than a "Ready" it cannot yet honour.
+        let rows = ModelCatalog.rows(
+            selected: .balanced,
+            downloaded: [.balanced, .accurate],
+            compiling: [.accurate]
+        )
+        #expect(rows.first { $0.model == .balanced }?.availability == .inUse)
+        #expect(rows.first { $0.model == .accurate }?.availability == .compiling)
+    }
+
     @Test("A download whose size is not yet known still reads as a download")
     func unknownProgressIsStillDownloading() {
         let rows = ModelCatalog.rows(

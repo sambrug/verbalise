@@ -16,6 +16,9 @@ protocol SettingsDelegate: AnyObject {
 
     var downloadedModels: Set<TranscriptionModel> { get }
     var modelDownloads: [TranscriptionModel: Double?] { get }
+    /// Models mid first-use Neural Engine compile — the selected one via the
+    /// engine, others compiling in the background.
+    var compilingModels: Set<TranscriptionModel> { get }
     func downloadModel(_ model: TranscriptionModel)
     func cancelModelDownload(_ model: TranscriptionModel)
     /// Deletes a downloaded model. Only ever called for one not in use.
@@ -251,7 +254,8 @@ final class SettingsModel: ObservableObject {
             selected: settings.transcriptionModel,
             downloaded: delegate.downloadedModels,
             downloading: delegate.modelDownloads,
-            removable: delegate.removableModels
+            removable: delegate.removableModels,
+            compiling: delegate.compilingModels
         )
         inputDevices = AudioDevices.inputDevices().map(\.name)
         launchesAtLogin = LoginItem.isEnabled
