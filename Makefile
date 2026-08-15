@@ -6,32 +6,32 @@ help:
 	@echo "Open Whisper — make targets:"
 	@echo ""
 	@echo "  make test         Run the test suite"
-	@echo "  make app          Build + sign swift/build/OpenWhisperSwift.app"
+	@echo "  make app          Build + sign build/OpenWhisperSwift.app"
 	@echo "  make run          Build and launch it"
 	@echo "  make install      Copy it to /Applications as the everyday app"
-	@echo "  make xcodeproj    Generate swift/OpenWhisperSwift.xcodeproj (needs xcodegen)"
+	@echo "  make xcodeproj    Generate OpenWhisperSwift.xcodeproj (needs xcodegen)"
 	@echo "  make signing-cert Create the per-machine code-signing certificate (once)"
 	@echo ""
 
 test:
-	./swift/Scripts/test.sh
+	./scripts/test.sh
 
 app:
-	./swift/Scripts/build-app.sh
+	./scripts/build-app.sh
 
 run: app
-	open swift/build/OpenWhisperSwift.app
+	open build/OpenWhisperSwift.app
 
 signing-cert:
 	./scripts/create-signing-cert.sh
 
 install: app
 	@# TCC keys Input Monitoring and Accessibility to the bundle *path*, so
-	@# an app moved from swift/build/ to /Applications is a new app as far
-	@# as macOS is concerned and both grants have to be given again.
+	@# an app moved from build/ to /Applications is a new app as far as
+	@# macOS is concerned and both grants have to be given again.
 	@echo "==> Installing to /Applications/Open Whisper.app ..."
 	@rm -rf "/Applications/Open Whisper.app"
-	@cp -R "swift/build/OpenWhisperSwift.app" "/Applications/Open Whisper.app"
+	@cp -R "build/OpenWhisperSwift.app" "/Applications/Open Whisper.app"
 	@echo ""
 	@echo "    Installed. Two things left, both of which need you:"
 	@echo "      1. Open it, then grant Input Monitoring and Accessibility again."
@@ -42,5 +42,5 @@ xcodeproj:
 		echo "xcodegen not found. Install it with: brew install xcodegen" >&2; \
 		exit 1; \
 	}
-	cd swift && xcodegen
-	@echo "Generated swift/OpenWhisperSwift.xcodeproj (gitignored — regenerate, don't edit)."
+	xcodegen
+	@echo "Generated OpenWhisperSwift.xcodeproj (gitignored — regenerate, don't edit)."

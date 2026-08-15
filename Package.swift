@@ -9,7 +9,7 @@
 // without Xcode. `project.yml` regenerates an equivalent .xcodeproj for anyone
 // who does have Xcode; it is not required to build.
 //
-// Swift Testing lives outside the default search path under CLT. Scripts/test.sh
+// Swift Testing lives outside the default search path under CLT. scripts/test.sh
 // passes the -F flags that make `swift test` find it.
 
 import PackageDescription

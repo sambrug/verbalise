@@ -1,6 +1,15 @@
 .DS_Store
 *.lock
 
+# Build outputs
+.build/
+build/
+*.xcodeproj
+.swiftpm/
+
+# Staged speech model (~1GB) — fetched by scripts/fetch-default-model.sh
+Resources/Models/
+
 # Local dev artifacts
 .claude/
 .playwright-mcp/

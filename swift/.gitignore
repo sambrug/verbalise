@@ -1,9 +1,0 @@
-.build/
-build/
-*.xcodeproj
-
-# Staged speech model (~1GB) — fetched by Scripts/fetch-default-model.sh
-Resources/Models/
-
-# Xcode/SwiftPM local scratch
-.swiftpm/

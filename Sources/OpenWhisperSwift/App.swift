@@ -27,7 +27,7 @@ enum OpenWhisperApp {
             return
         }
 
-        // Lets Scripts/fetch-default-model.sh find the folder to stage without
+        // Lets scripts/fetch-default-model.sh find the folder to stage without
         // duplicating the mapping in shell, where it would silently drift.
         if CommandLine.arguments.contains("--print-bundled-variant") {
             print(TranscriptionModel.bundled.whisperKitModelName)

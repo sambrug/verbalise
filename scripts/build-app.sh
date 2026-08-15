@@ -13,7 +13,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-REPO_ROOT="$(cd .. && pwd)"
+REPO_ROOT="$(pwd)"
 
 CONFIG="${CONFIG:-release}"
 APP_NAME="OpenWhisperSwift"
@@ -22,7 +22,7 @@ IDENTITY="${SIGN_IDENTITY:-Open Whisper Dev}"
 
 if ! security find-identity -v -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
     echo "error: signing identity '$IDENTITY' not found." >&2
-    echo "Run ${REPO_ROOT}/scripts/create-signing-cert.sh first." >&2
+    echo "Run 'make signing-cert' first." >&2
     exit 1
 fi
 
