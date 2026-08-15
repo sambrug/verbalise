@@ -43,3 +43,39 @@ identity from `make signing-cert` is what lets ordinary rebuilds keep them.
 `legacy-python/` is the original implementation, self-contained and
 deprecated. Don't reference it from anything outside that directory, and
 don't spend effort maintaining it.
+
+## Xcode: Previews and the App Store archive
+
+`swift build`/`make test`/`make app` never need Xcode. `Verbalise.xcodeproj`
+(gitignored, `make xcodeproj`) exists only for two things that do: SwiftUI
+Previews, and producing an App Store archive.
+
+Previewing a file in the `Verbalise` target (`SettingsPanes.swift`,
+`OverlayPill.swift`) needs `ENABLE_DEBUG_DYLIB` on for Debug — already set in
+`project.yml`. Even with that, Previews can still be slow or fail with a
+misleading "unable to type-check in reasonable time" error, because it
+JIT-links this target's *entire* dependency graph on every update, including
+WhisperKit/ArgmaxCore, regardless of what the previewed file actually touches.
+If that happens, confirm it's not a real code problem first — `swift build
+--product Verbalise` compiles in seconds and is the fast way to rule that out
+— before assuming the Mac is underpowered or fighting the expression itself.
+
+For the archive: Automatic signing in Xcode's Signing & Capabilities tab is
+the path that's actually been used successfully, not hand-editing
+`CODE_SIGN_IDENTITY`/`DEVELOPMENT_TEAM` in `project.yml` the way an older
+comment there suggests. Xcode switches identities on its own by build action
+— Apple Development for Run, Apple Distribution + a Mac App Store profile for
+Archive — creating whatever's missing the first time you archive.
+
+`Resources/PrivacyInfo.xcprivacy` must not contain XML comments. It's valid
+plist XML either way, but App Store Connect's validator (seen as ITMS-91056,
+"Invalid privacy manifest") rejects it anyway if one's present, apparently
+using a stricter parser than a generic plist reader. Re-verify
+`NSPrivacyAccessedAPITypes` against WhisperKit before each archive regardless
+— it's built from source via SwiftPM, so its API use counts as this app's
+rather than being covered by a manifest of its own.
+
+Support and the privacy policy page are hosted in a separate public repo,
+[`sambrug/verbalise-support`](https://github.com/sambrug/verbalise-support)
+— issues for support, `PRIVACY.md` for the policy — kept apart from this
+private source repo on purpose.
