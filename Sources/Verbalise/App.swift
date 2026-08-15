@@ -65,23 +65,31 @@ enum VerbaliseApp {
 
         Task.detached {
             defer { done.signal() }
-            let engine = TranscriptionEngine(settings: settings) { phase in
-                switch phase {
-                case .downloading(let fraction):
-                    if let fraction {
+            do {
+                // The same pipeline the app runs: download, the one-off
+                // compile, then a load — so this flag proves the exact path a
+                // user's first dictation depends on.
+                let model = settings.transcriptionModel
+                let downloader = VerbaliseCore.ModelDownloader.live { inFlight in
+                    if let fraction = inFlight[model] ?? nil {
                         print(String(format: "  downloading %.0f%%", fraction * 100))
-                    } else {
-                        print("  downloading…")
                     }
-                case .preparing:
+                }
+                try await downloader.ensureDownloaded(model)
+
+                if !TranscriptionEngine.isPrepared(model) {
                     print("  preparing for first use (compiling for the Neural Engine — "
                           + "this can take several minutes)…")
-                case .loading: print("  loading…")
-                case .ready: print("  ready")
-                case .idle: break
                 }
-            }
-            do {
+                try await ModelPreparer.live().ensurePrepared(model)
+
+                let engine = TranscriptionEngine(settings: settings) { phase in
+                    switch phase {
+                    case .loading: print("  loading…")
+                    case .ready: print("  ready")
+                    case .idle: break
+                    }
+                }
                 try await engine.ensureLoaded()
             } catch {
                 outcome.set(error)

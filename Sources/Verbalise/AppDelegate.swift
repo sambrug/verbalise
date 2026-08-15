@@ -23,8 +23,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var session: AudioSession?
     private var engine: TranscriptionEngine?
 
-    /// Fetches tiers the user asked for but is not using yet. Separate from the
-    /// engine, which downloads only what it needs to transcribe right now.
+    /// Fetches model files. Every download runs here, whoever asked — the
+    /// Settings window, the launch preload, a refused keypress — so progress
+    /// has one source and Cancel always has a task to cancel.
     private lazy var downloader = ModelDownloader.live { inFlight in
         Task { @MainActor in
             AppDelegate.shared?.note(downloads: inFlight)
@@ -33,31 +34,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cachedDownloads: [TranscriptionModel: Double?] = [:]
 
     private func note(downloads inFlight: [TranscriptionModel: Double?]) {
-        let finished = Set(cachedDownloads.keys).subtracting(inFlight.keys)
         cachedDownloads = inFlight
         SettingsWindow.refreshIfOpen()
-        // A download of the *selected* model drives the status line and the
-        // pulse, so they must notice it starting and finishing.
         refreshStatusLine()
-
-        // Download and compile are two halves of one lifecycle, so a fetch
-        // that just landed flows straight into its one-off ANE compile — now,
-        // while the user is elsewhere, not on their next keypress (#8). The
-        // selected model compiles in the engine, which keeps the result to
-        // dictate with; any other compiles in the background and keeps
-        // nothing. `isDownloaded` filters out the other ways a download
-        // leaves `inFlight`: a cancel or a failure leaves no folder behind.
-        for model in finished where TranscriptionEngine.isDownloaded(model) {
-            if model == settings.transcriptionModel {
-                preloadModel()
-            } else {
-                Task { try? await preparer.ensurePrepared(model) }
-            }
-        }
     }
 
-    /// Compiles downloaded-but-unselected tiers in the background, so
-    /// switching to them later is seconds, not minutes.
+    /// Runs every first-use Neural Engine compile, one at a time. The engine
+    /// itself never compiles; it waits for this.
     private lazy var preparer = ModelPreparer.live { inFlight in
         Task { @MainActor in
             AppDelegate.shared?.note(prepares: inFlight)
@@ -66,17 +49,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cachedPrepares: Set<TranscriptionModel> = []
 
     private func note(prepares inFlight: Set<TranscriptionModel>) {
-        let finished = cachedPrepares.subtracting(inFlight)
         cachedPrepares = inFlight
         SettingsWindow.refreshIfOpen()
         refreshStatusLine()
+    }
 
-        // The user selected a model while its background compile was still
-        // running; it is ready now, so give the engine its fast load.
-        if finished.contains(settings.transcriptionModel),
-           TranscriptionEngine.isPrepared(settings.transcriptionModel) {
-            preloadModel()
+    // MARK: - Provisioning
+
+    /// The one pipeline that takes a tier from wherever it is to fully
+    /// usable: download, then the one-off compile, then — if it is the
+    /// selected model — the engine load.
+    ///
+    /// This replaces a web of "when X finishes, kick Y" callbacks whose gaps
+    /// were where the lifecycle bugs lived: steps could be started twice,
+    /// raced from two owners, or dropped between hand-offs. Each step joins
+    /// work already in flight rather than duplicating it, so calling this is
+    /// always safe — a repeat press of a dead trigger key, a re-selected
+    /// model, a Download click on a tier already fetching all land in the
+    /// same place.
+    private var provisions: [TranscriptionModel: Task<Void, Never>] = [:]
+
+    private func provision(_ model: TranscriptionModel) {
+        guard provisions[model] == nil else { return }
+        provisions[model] = Task { [downloader, preparer] in
+            var failure: String?
+            var wasCancelled = false
+            do {
+                try await downloader.ensureDownloaded(model)
+                try await preparer.ensurePrepared(model)
+            } catch is CancellationError {
+                wasCancelled = true
+            } catch {
+                failure = error.localizedDescription
+            }
+            AppDelegate.shared?.finishProvision(
+                of: model, failure: failure, cancelled: wasCancelled
+            )
         }
+    }
+
+    private func finishProvision(of model: TranscriptionModel, failure: String?, cancelled: Bool) {
+        provisions[model] = nil
+        defer {
+            refreshStatusLine()
+            SettingsWindow.refreshIfOpen()
+        }
+        if let failure {
+            // Not fatal: the files are retried on the next ask — a keypress,
+            // a re-click of Download, the next launch.
+            log("model: provisioning \(model.rawValue) failed — \(failure)")
+            return
+        }
+        if cancelled { return }
+        if model == settings.transcriptionModel { loadEngine() }
     }
 
     private var cachedStats = UsageStats()
@@ -142,7 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // takes a few seconds; one that needs fetching, or whose files have
         // never been loaded (the multi-minute first-use ANE compile), shows
         // its progress in the menu and gates the trigger key until it's done.
-        preloadModel()
+        provision(settings.transcriptionModel)
         startIdleTimer()
     }
 
@@ -339,18 +364,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return session
     }
 
-    /// Loads the model in the background at launch, and after a model change.
+    /// Loads the provisioned model into memory in the background.
     ///
-    /// A failure here is not fatal and deliberately does not alert: the next
-    /// dictation retries, and a transient network problem at launch should not
-    /// greet the user with a dialog about something they were not doing.
-    private func preloadModel() {
+    /// Only ever called for a model the pipeline has finished with, so this is
+    /// a few-second cached load, never a download or compile. A failure is not
+    /// fatal and deliberately does not alert: the next dictation retries, and
+    /// a transient problem at launch should not greet the user with a dialog
+    /// about something they were not doing.
+    private func loadEngine() {
         guard let engine else { return }
         Task.detached(priority: .utility) {
             do {
                 try await engine.ensureLoaded()
             } catch {
-                log("model: preload failed — \(error.localizedDescription)")
+                log("model: load failed — \(error.localizedDescription)")
             }
         }
     }
@@ -396,32 +423,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // user has no way to tell it apart from a crash — better to say so
             // and let them try again in a moment. Two waits qualify: a
             // download, and the ANE compile on the first load of freshly
-            // downloaded files. A *cached* load stays ungated — it takes a few
-            // seconds, which is time the user spends speaking anyway.
-            // A refusal shows nothing of its own: the pulsing menu bar icon
+            // downloaded files — and the stamp check covers both, since a
+            // model with no complete folder cannot be stamped. A *cached*
+            // load stays ungated — it takes a few seconds, which is time the
+            // user spends speaking anyway.
+            // A refusal shows little of its own: the pulsing menu bar icon
             // and the clickable status line are already reporting the wait,
             // and both started when the wait did, not at this keypress. (An
             // alert row and a pill flash were tried and retired here — one
             // broke the menu's pattern, the other the pill's shape.)
             let model = settings.transcriptionModel
-            var downloading = cachedDownloads.keys.contains(model)
-            if case .downloading = enginePhase { downloading = true }
-            if downloading {
-                log("dictation: refused, model still downloading")
-                return
-            }
-            // Asked of the stamp rather than the phase, because the phase
-            // cannot warn about work that has not started yet: the compile may
-            // still be queued behind a preload, or not be underway at all.
-            if enginePhase != .ready, !TranscriptionEngine.isPrepared(model) {
-                log("dictation: refused, model needs its first-use compile")
-                // Make sure that compile is actually underway — unless the
-                // background preparer already has it, in which case a second,
-                // racing compile of the same files helps nobody. Repeat
-                // presses join whichever is running.
-                if !cachedPrepares.contains(model) {
-                    preloadModel()
-                }
+            if !TranscriptionEngine.isPrepared(model) {
+                log("dictation: refused, the speech model isn't ready")
+                // Make sure the missing work is actually underway. Joins
+                // whatever is already running; a repeat press cannot start
+                // anything twice.
+                provision(model)
                 return
             }
             if settings.soundEnabled { Sounds.playStart() }
@@ -496,7 +513,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func show(phase: TranscriptionEngine.Phase) {
         enginePhase = phase
         switch phase {
-        case .downloading, .preparing, .loading:
+        case .loading:
             break
         case .ready:
             // The idle countdown starts from the moment there is something to
@@ -506,10 +523,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { await lifecycle.noteUnloaded() }
         }
         refreshStatusLine()
-        // The engine downloads too, and the Settings window must show that as
-        // one download rather than none -- otherwise a model fetched on the way
-        // to a dictation appears in the list as simply missing.
-        SettingsWindow.refreshIfOpen()
     }
 
     /// The status line's one writer.
@@ -520,20 +533,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the model was still minutes from loaded (#8). Deriving the line from
     /// both here means neither can contradict the other: dictation activity
     /// outranks engine phases, and an idle dictation shows whatever the
-    /// engine is doing.
+    /// pipeline is doing.
     /// Whether the selected model is mid-download or mid-compile — the two
     /// waits dictation is gated behind. Background work on *other* tiers
     /// deliberately doesn't count: dictation works throughout, so there is
     /// nothing to pull the eye to; the Speech Model pane shows it to whoever
     /// goes looking.
     private var selectedModelBusy: Bool {
-        switch enginePhase {
-        case .downloading, .preparing:
-            return true
-        case .loading, .ready, .idle:
-            return cachedDownloads.keys.contains(settings.transcriptionModel)
-                || cachedPrepares.contains(settings.transcriptionModel)
-        }
+        cachedDownloads.keys.contains(settings.transcriptionModel)
+            || cachedPrepares.contains(settings.transcriptionModel)
     }
 
     private func refreshStatusLine() {
@@ -551,24 +559,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .transcribing:
             menu?.show(state: .transcribing)
         case .idle:
-            switch enginePhase {
-            case .downloading(let fraction):
+            // Every download and compile is the pipeline's now, so the caches
+            // are the whole story; the engine only ever adds a few seconds of
+            // "Loading model…".
+            if let fraction = cachedDownloads[settings.transcriptionModel] {
                 show(downloadStatus: fraction)
-            case .preparing:
+            } else if cachedPrepares.contains(settings.transcriptionModel) {
                 showCompilingStatus()
-            case .loading:
+            } else if enginePhase == .loading {
                 menu?.show(status: "Loading model…")
-            case .ready, .idle:
-                // The engine is quiet, but the selected model may be moving
-                // through its lifecycle elsewhere: fetched by the downloader,
-                // or compiled by the background preparer.
-                if let fraction = cachedDownloads[settings.transcriptionModel] {
-                    show(downloadStatus: fraction)
-                } else if cachedPrepares.contains(settings.transcriptionModel) {
-                    showCompilingStatus()
-                } else {
-                    menu?.show(state: .idle)
-                }
+            } else {
+                menu?.show(state: .idle)
             }
         }
     }
@@ -618,30 +619,25 @@ extension AppDelegate: SettingsDelegate {
         TranscriptionEngine.downloadedModels
     }
 
-    /// In-flight downloads from both sources — the explicit ones the user
-    /// started in the window, and the implicit one the engine starts when the
-    /// configured model is missing.
+    /// In-flight downloads. One source now — every download runs in the
+    /// downloader, so this is the whole truth and Cancel always has a task
+    /// behind it.
     var modelDownloads: [TranscriptionModel: Double?] {
-        var all = cachedDownloads
-        if case .downloading(let fraction) = enginePhase {
-            all.updateValue(fraction, forKey: settings.transcriptionModel)
-        }
-        return all
+        cachedDownloads
     }
 
-    /// Models mid first-use compile, from both sources — the selected one the
-    /// engine is compiling to dictate with, and any the preparer is compiling
-    /// in the background.
+    /// Models queued or running in the compile queue. One source, same
+    /// reasoning.
     var compilingModels: Set<TranscriptionModel> {
-        var all = cachedPrepares
-        if enginePhase == .preparing {
-            all.insert(settings.transcriptionModel)
-        }
-        return all
+        cachedPrepares
     }
 
+    /// The pane's Download button. Through the full pipeline, not just the
+    /// fetch: a downloaded-but-uncompiled tier would still cost minutes at
+    /// selection time, and paying that now, in the background, is the whole
+    /// point of pre-fetching.
     func downloadModel(_ model: TranscriptionModel) {
-        Task { try? await downloader.ensureDownloaded(model) }
+        provision(model)
     }
 
     func cancelModelDownload(_ model: TranscriptionModel) {
@@ -712,36 +708,18 @@ extension AppDelegate: SettingsDelegate {
             log("config: audio input changed, rebuilding the session")
         }
 
-        // preloadModel's doc promised "after a model change" from the start,
-        // but nothing called it — so a switched model sat unloaded until the
-        // next keypress, and if its files had never been loaded before, that
-        // keypress ran into the full first-use compile. Two hands-off cases:
-        // an absent tier is already being fetched by the ModelDownloader
-        // (SettingsWindow.select starts that), and a tier mid-background-
-        // compile is already being prepared — in both, a second worker on the
-        // same files would only race the first. note(downloads:)/(prepares:)
-        // pick each up the moment it finishes.
         let modelChanged = old.transcriptionModel != newSettings.transcriptionModel
-
-        // Switching away mid-compile abandons the engine's load, but not the
-        // compile: hand it to the background preparer, so the tier keeps its
-        // "Compiling…" row in the pane — the same way a background download
-        // keeps its bar — and its place in the pipeline. The preparer's work
-        // mostly lands in macOS's cache warm from the abandoned load, so this
-        // costs little and makes the finish observable (the stamp, the row
-        // clearing, the fast load if the user switches back).
-        if modelChanged, enginePhase == .preparing {
-            let abandoned = old.transcriptionModel
-            Task { try? await preparer.ensurePrepared(abandoned) }
-        }
 
         Task { [engine, controller, newSettings] in
             await engine?.apply(settings: newSettings)
             await controller?.apply(settings: newSettings)
-            if modelChanged,
-               TranscriptionEngine.isDownloaded(newSettings.transcriptionModel),
-               AppDelegate.shared?.cachedPrepares.contains(newSettings.transcriptionModel) != true {
-                AppDelegate.shared?.preloadModel()
+            // Provision only once the engine holds the new settings, so the
+            // load at the end of the pipeline can only ever load the right
+            // model. Every step joins work already in flight — a tier
+            // mid-download or mid-compile keeps its place and its progress
+            // row; nothing restarts.
+            if modelChanged {
+                AppDelegate.shared?.provision(newSettings.transcriptionModel)
             }
         }
 

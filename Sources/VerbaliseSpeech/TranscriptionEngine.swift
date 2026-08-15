@@ -11,24 +11,23 @@ public actor TranscriptionEngine: Transcriber {
 
     public enum Phase: Sendable, Equatable {
         case idle
-        /// 0...1, or nil while the total size is still unknown.
-        case downloading(Double?)
-        /// The first load of these model files: CoreML is compiling them for
-        /// the Neural Engine, which takes minutes, not the seconds `loading`
-        /// implies. A separate phase because the two deserve opposite UI --
-        /// dictation can ride out a cached load, but recording into a compile
-        /// produces a dictation that looks hung (#8).
-        case preparing
         case loading
         case ready
     }
 
     public enum EngineError: Error, LocalizedError {
-        case noStorage
+        /// The model's files aren't on disk, or haven't been through their
+        /// first-use compile. The engine refuses rather than doing that work
+        /// itself: a download or a compile started from inside a load is
+        /// minutes of invisible work behind whatever UI asked for the load —
+        /// the "stuck transcribing" with nothing on screen saying why. The
+        /// provisioning pipeline owns those steps and shows them properly.
+        case notReady
 
         public var errorDescription: String? {
             switch self {
-            case .noStorage: "Could not find a place to store speech models."
+            case .notReady:
+                "The speech model isn't ready yet — it's still downloading or compiling."
             }
         }
     }
@@ -194,7 +193,9 @@ public actor TranscriptionEngine: Transcriber {
         return nil
     }
 
-    /// Downloads if needed, then loads. Safe to call repeatedly, and safe to
+    /// Loads the configured model, provided the pipeline has finished with it
+    /// — on disk and through its first-use compile — and throws
+    /// `EngineError.notReady` otherwise. Safe to call repeatedly, and safe to
     /// call concurrently: callers arriving while a load is running wait on that
     /// load rather than starting another.
     public func ensureLoaded() async throws {
@@ -242,48 +243,25 @@ public actor TranscriptionEngine: Transcriber {
 
     private func performLoad(_ model: TranscriptionModel) async throws {
         let variant = model.whisperKitModelName
+
+        // The engine loads; it never downloads and never compiles. Both used
+        // to happen implicitly in here, which meant minutes of invisible work
+        // could start from any code path that merely wanted the model in
+        // memory — a transcription, a launch preload — with nothing on screen
+        // saying so. The provisioning pipeline (ModelDownloader,
+        // ModelPreparer) owns those steps now and reports them properly, so a
+        // model that reaches this point loads in seconds. One that hasn't
+        // been through the pipeline is refused, quickly and loudly.
+        guard let folder = Self.existingFolder(for: variant),
+              ModelPreparationStamp.isPrepared(variant: variant, folder: folder)
+        else {
+            throw EngineError.notReady
+        }
+
         let wasCold = whisperKit == nil
         clearModel()
 
-        // Download and load are timed separately. Folding them together makes
-        // a nine-minute first run look like a nine-minute model load, which is
-        // exactly the wrong conclusion to draw when tuning startup.
-        var downloadSeconds: TimeInterval = 0
-        let folder: URL
-
-        if let existing = Self.existingFolder(for: variant) {
-            folder = existing
-            log("model: using existing \(variant) at \(existing.lastPathComponent)")
-        } else {
-            let downloadStarted = Date()
-            defer { downloadSeconds = Date().timeIntervalSince(downloadStarted) }
-            // Download explicitly rather than letting the config do it
-            // implicitly, so there is a progress figure to show. The Python
-            // app's silent "Loading…" on first use of a model is what this
-            // replaces -- a download this size with no feedback reads as a
-            // freeze.
-            onPhase(.downloading(nil))
-            folder = try await WhisperKit.download(
-                variant: variant,
-                downloadBase: Self.modelStorage,
-                progressCallback: { [onPhase] progress in
-                    let fraction = progress.fractionCompleted
-                    onPhase(.downloading(fraction > 0 ? fraction : nil))
-                }
-            )
-        }
-
-        // A first load of these files is an ANE compile measured in minutes;
-        // say so, both to the UI and to the log -- "loaded cold in 3.8s" and
-        // "loaded cold in 8 minutes" are different events, and telling them
-        // apart is what the stamp exists for (#8).
-        let prepared = ModelPreparationStamp.isPrepared(variant: variant, folder: folder)
-        if prepared {
-            onPhase(.loading)
-        } else {
-            log("model: first load of \(variant), compiling for the Neural Engine")
-            onPhase(.preparing)
-        }
+        onPhase(.loading)
         let loadStarted = Date()
         let config = WhisperKitConfig(
             modelFolder: folder.path,
@@ -311,14 +289,6 @@ public actor TranscriptionEngine: Transcriber {
             throw error
         }
 
-        // Stamped before the cancellation check, deliberately: the compile
-        // happened whether or not anyone still wants the result. Switching
-        // tiers mid-compile cancels this load, but macOS finishes and caches
-        // the compile anyway — so the stamp must say so, or coming back to
-        // this model would present the whole multi-minute wait again for a
-        // load that will actually take seconds.
-        ModelPreparationStamp.recordPrepared(variant: variant, folder: folder)
-
         // Cancelled while this was loading -- the tier changed, or the model was
         // unloaded outright. Installing it now would put back the very thing the
         // caller asked to be rid of.
@@ -329,21 +299,10 @@ public actor TranscriptionEngine: Transcriber {
         // Performance parity with the Python (commit c778fd6), which logged
         // cold vs warm load separately. Peak GPU memory was MLX-specific and
         // has no WhisperKit equivalent, so it is simply not logged.
-        // "first" marks a load that included the ANE compile, so its number is
-        // never mistaken for what a routine load costs.
-        let loadSeconds = Date().timeIntervalSince(loadStarted)
-        let temperature = prepared ? (wasCold ? "cold" : "warm") : "first"
-        if downloadSeconds > 0 {
-            log(String(
-                format: "model: %@ downloaded in %.0fs, loaded %@ in %.2fs",
-                variant, downloadSeconds, temperature, loadSeconds
-            ))
-        } else {
-            log(String(
-                format: "model: %@ loaded %@ in %.2fs",
-                variant, temperature, loadSeconds
-            ))
-        }
+        log(String(
+            format: "model: %@ loaded %@ in %.2fs",
+            variant, wasCold ? "cold" : "warm", Date().timeIntervalSince(loadStarted)
+        ))
         onPhase(.ready)
     }
 
