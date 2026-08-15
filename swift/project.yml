@@ -52,10 +52,6 @@ targets:
           # which ships the entitlements file inside the app.
           - "Info.plist"
           - "OpenWhisperSwift.entitlements"
-      # Loaded by path at runtime, exactly as the Python overlay did, so the
-      # SVGs stay the single source for both apps.
-      - path: ../SVG icons for menu bar
-        buildPhase: resources
       # Icon Composer bundle. Xcode's asset pipeline compiles it, the same
       # way Scripts/build-app.sh does with actool directly.
       - path: Resources/AppIcon.icon

@@ -23,34 +23,6 @@ import SwiftUI
 //     sibling trick would look in the wrong directory; it asks the bundle
 //     instead, and falls back to the repo layout for `swift run`.
 
-// MARK: - Pill Icon Loading
-
-private let pillIconDirectory: String = {
-    // Bundled: Contents/Resources/SVG icons for menu bar/
-    if let resources = Bundle.main.resourceURL {
-        let bundled = resources.appendingPathComponent("SVG icons for menu bar")
-        if FileManager.default.fileExists(atPath: bundled.path) {
-            return bundled.path
-        }
-    }
-    // Source mode (`swift run`): the repo root, two levels up from swift/.
-    let executable = CommandLine.arguments[0]
-    let executableDirectory = (executable as NSString).deletingLastPathComponent
-    return (executableDirectory as NSString).appendingPathComponent("SVG icons for menu bar")
-}()
-
-private func loadPillIcon(_ filename: String) -> NSImage? {
-    let path = (pillIconDirectory as NSString).appendingPathComponent(filename)
-    guard let image = NSImage(contentsOfFile: path) else { return nil }
-    image.isTemplate = true
-    return image
-}
-
-private let pillIcons: [String: NSImage] = [
-    "recording": loadPillIcon("circle.svg"),
-    "processing": loadPillIcon("sparkle.svg"),
-].compactMapValues { $0 }
-
 // MARK: - Model
 
 /// `@MainActor` is the one addition to this class. The original was a
@@ -70,17 +42,24 @@ final class OverlayModel: ObservableObject {
     private var timer: Timer?
     private var recordStart: Date?
 
-    // SF Symbol fallback used only if the SVG fails to load. Same
-    // state→symbol mapping as the SVGs above.
-    var sfSymbol: String {
-        currentState == "recording" ? "circle.fill" : "sparkle"
-    }
-
-    var pillIcon: NSImage? {
+    /// SF Symbols rather than the hand-drawn SVGs this was ported with.
+    ///
+    /// Those were a filled circle and a four-point star, drawn to imitate SF
+    /// Symbols without being them -- so they missed the optical sizing Apple
+    /// applies at small sizes, and they had to be loaded from disk at runtime.
+    ///
+    /// `circle.fill` is the universal record indicator: QuickTime, Voice Memos,
+    /// every recorder. `record.circle` reads as a button to press rather than a
+    /// state, which is wrong for a readout.
+    ///
+    /// `sparkles` rather than the singular `sparkle` is Apple's mark for
+    /// on-device intelligence, and is already what the Speech Model settings
+    /// pane uses -- the same symbol for the same idea in both places.
+    var symbolName: String {
         switch currentState {
-        case "recording": pillIcons["recording"]
-        case "transcribing", "cleaning": pillIcons["processing"]
-        default: nil
+        case "recording": "circle.fill"
+        case "transcribing", "cleaning": "sparkles"
+        default: "circle.fill"
         }
     }
 
@@ -249,20 +228,13 @@ struct OverlayContentView: View {
             iconWidth + 10 + timerWidth + 10 + PillBarsView.recordingWidth
 
         let pill = HStack(spacing: 10) {
-            Group {
-                if let icon = model.pillIcon {
-                    Image(nsImage: icon)
-                        .resizable()
-                        .renderingMode(.template)
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 18.5, height: 18.5)
-                } else {
-                    Image(systemName: model.sfSymbol)
-                        .font(.system(size: 14, weight: .semibold))
-                }
-            }
-            .foregroundColor(iconColor)
-            .frame(width: iconWidth, alignment: .center)
+            // Size is the one knob. An SF Symbol sizes from its font, so this
+            // is the number to change if the glyph wants to be bigger or
+            // smaller; iconWidth below is the slot it sits in, not its size.
+            Image(systemName: model.symbolName)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(iconColor)
+                .frame(width: iconWidth, alignment: .center)
 
             Text(model.elapsedLabel)
                 // SF Pro with tabular figures, rather than SF Mono.
@@ -349,18 +321,17 @@ struct OverlayContentView: View {
 final class TransparentHostingView<Content: View>: NSHostingView<Content> {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        // Remove the default opaque background that NSHostingView draws
+        // Only this view's own backing, and the window's. An earlier version
+        // walked into `subviews` and cleared their layers too, which was right
+        // when the pill was a hand-built capsule over an NSVisualEffectView --
+        // and wrong the moment it became Liquid Glass. Those subviews are
+        // SwiftUI's, and the glass material renders into one of them: clearing
+        // its backing leaves the fill without the backdrop sampling that makes
+        // it blur and refract, which is exactly the flat translucent shape the
+        // pill had.
         window?.backgroundColor = .clear
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.layer?.isOpaque = false
-            self.layer?.backgroundColor = .clear
-            for subview in self.subviews {
-                subview.wantsLayer = true
-                subview.layer?.isOpaque = false
-                subview.layer?.backgroundColor = .clear
-            }
-        }
+        layer?.isOpaque = false
+        layer?.backgroundColor = .clear
     }
 
     override func layout() {

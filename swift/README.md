@@ -164,9 +164,13 @@ copying those two JSON files across by hand works.
 - Overlay is on or off. The opaque `solid` style was a fallback for macOS
   without Liquid Glass. Old configs naming `solid` or `translucent` load as on.
 - The pill isn't a verbatim port any more. The solid variant is gone, the glass
-  gained a shadow, and levels are sampled at a fixed 20Hz rather than pushed
-  once per audio buffer. `overlay.swift` in the repo root still drives the
+  gained a shadow, levels are sampled at a fixed 20Hz rather than pushed once
+  per audio buffer, and its glyphs are SF Symbols instead of the hand-drawn
+  SVGs that imitated them. `overlay.swift` in the repo root still drives the
   Python app, so the two render differently now.
+- No SVG assets. `SVG icons for menu bar/` in the repo root belongs to the
+  Python app now; nothing here reads it, and it is no longer copied into the
+  bundle.
 - Config is JSON, not YAML. Same keys, same defaults.
 - Phonetic corrections apply in sorted-key order. Python uses dict insertion
   order, which a Swift `Dictionary` can't preserve through decoding.

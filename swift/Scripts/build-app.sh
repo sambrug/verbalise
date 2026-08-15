@@ -83,13 +83,6 @@ elif [ -f "Resources/AppIcon-fallback.icns" ]; then
     echo "    icon: AppIcon-fallback.icns (no actool, so no Liquid Glass icon)"
 fi
 
-# The pill's icons. Loaded by path at runtime rather than compiled in, exactly
-# as the Python overlay did, so the SVGs stay the single source for both apps.
-if [ -d "$REPO_ROOT/SVG icons for menu bar" ]; then
-    cp -R "$REPO_ROOT/SVG icons for menu bar" "$BUNDLE/Contents/Resources/"
-else
-    echo "    warning: pill icons not found — falling back to SF Symbols" >&2
-fi
 
 # The bundled speech model, if it has been staged. Absent in a normal
 # development build, which falls back to downloading on demand rather than
