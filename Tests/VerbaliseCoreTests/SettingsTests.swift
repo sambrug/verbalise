@@ -9,7 +9,7 @@ struct SettingsTests {
     func defaultsMatchExampleConfig() {
         let s = Settings()
         #expect(s.transcriptionModel == .balanced)
-        #expect(s.triggerKey == "shift_r")
+        #expect(s.triggerKey == "alt_r+shift_r")
         #expect(s.language == "en")
         #expect(s.minDuration == 0.5)
         #expect(s.maxDuration == 300)
