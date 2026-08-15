@@ -206,7 +206,20 @@ public actor TranscriptionEngine: Transcriber {
 
         loadGeneration &+= 1
         let generation = loadGeneration
-        let task = Task { try await self.performLoad(model) }
+        let task = Task {
+            do {
+                try await self.performLoad(model)
+            } catch {
+                // A failed load leaves nothing loaded, and the phase must say
+                // so — otherwise the menu sits on "Compiling…" (pulsing, no
+                // less) for a load that is no longer happening. Not on
+                // cancellation: that means a newer load replaced this one and
+                // is already reporting its own phases, which an .idle from
+                // here would stomp.
+                if !(error is CancellationError) { self.onPhase(.idle) }
+                throw error
+            }
+        }
         loadTask = task
         loadingModel = model
         defer {
