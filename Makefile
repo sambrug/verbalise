@@ -5,7 +5,7 @@
 # of truth — run them directly if you want full output.
 
 .PHONY: help app app-dev app-clean install dev-setup overlay test signing-cert
-.PHONY: swift-app swift-test swift-run swift-xcodeproj test-all
+.PHONY: swift-app swift-test swift-run swift-xcodeproj swift-install test-all icon
 
 help:
 	@echo "Open Whisper — make targets:"
@@ -23,8 +23,11 @@ help:
 	@echo "  make swift-test      Run the Swift test suite"
 	@echo "  make swift-app       Build + sign swift/build/OpenWhisperSwift.app"
 	@echo "  make swift-run       Build and launch it"
+	@echo "  make swift-install   Copy it to /Applications as the everyday app"
 	@echo "  make swift-xcodeproj Generate swift/OpenWhisperSwift.xcodeproj (needs xcodegen)"
 	@echo "  make test-all        Run both the Python and Swift suites"
+	@echo ""
+	@echo "  make icon PNG=x.png  Rebuild assets/AppIcon.icns from a square PNG"
 	@echo ""
 
 test:
@@ -94,6 +97,13 @@ swift-app:
 
 swift-run: swift-app
 	open swift/build/OpenWhisperSwift.app
+
+icon:
+	@# Rebuilds assets/AppIcon.icns from a PNG:  make icon PNG=path/to/icon.png
+	@if [ -z "$(PNG)" ]; then \
+		echo "usage: make icon PNG=path/to/icon.png" >&2; exit 1; \
+	fi
+	./scripts/make-icon.sh "$(PNG)"
 
 swift-install: swift-app
 	@# Installs the Swift app to /Applications so it can be the daily driver.
