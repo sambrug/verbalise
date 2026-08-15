@@ -169,6 +169,13 @@ public actor TranscriptionEngine: Transcriber {
     /// The bundled copy comes first: `balanced` ships inside the app, so a
     /// fresh install must be able to dictate immediately rather than waiting
     /// on a download it does not need.
+    ///
+    /// A downloaded copy only counts when it is *complete*. Quitting the app
+    /// mid-download leaves the folder existing but missing files, and a bare
+    /// existence check turned that into a permanent wedge: every load trusted
+    /// the folder, failed on the missing file, and no download ever restarted
+    /// because the folder "existed". The bundled copy is exempt — it shipped
+    /// whole inside a signed bundle.
     static func existingFolder(for variant: String) -> URL? {
         if let bundled = Bundle.main.url(
             forResource: variant, withExtension: nil, subdirectory: "Models"
@@ -180,7 +187,7 @@ public actor TranscriptionEngine: Transcriber {
             let downloaded = storage
                 .appendingPathComponent("models/argmaxinc/whisperkit-coreml", isDirectory: true)
                 .appendingPathComponent(variant, isDirectory: true)
-            if FileManager.default.fileExists(atPath: downloaded.path) {
+            if ModelFolder.isComplete(downloaded) {
                 return downloaded
             }
         }
@@ -286,7 +293,23 @@ public actor TranscriptionEngine: Transcriber {
             load: true,
             download: false
         )
-        let loaded = try await WhisperKit(config)
+        let loaded: WhisperKit
+        do {
+            loaded = try await WhisperKit(config)
+        } catch let error as WhisperError {
+            // The folder passed the completeness check and still failed on a
+            // missing file — a truncated blob inside an .mlmodelc, which no
+            // existence check can see. Left in place it fails identically
+            // forever; deleted, the next attempt re-downloads. Never the
+            // bundled copy: it is read-only, shipped whole, and if *it* ever
+            // failed this way deleting the download directory would be
+            // aiming at the wrong thing.
+            if case .modelsUnavailable = error, Self.downloadFolder(for: model) == folder {
+                log("model: \(variant) is incomplete on disk, removing it so the next attempt re-downloads")
+                try? FileManager.default.removeItem(at: folder)
+            }
+            throw error
+        }
 
         // Stamped before the cancellation check, deliberately: the compile
         // happened whether or not anyone still wants the result. Switching
