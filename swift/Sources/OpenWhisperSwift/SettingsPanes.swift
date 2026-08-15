@@ -556,10 +556,16 @@ private struct PermissionRowView: View {
     let request: (@escaping () -> Void) -> Void
     @ObservedObject var model: SettingsModel
 
-    /// macOS shows its prompt once per app. After that, asking again returns the
-    /// standing answer and displays nothing, so a button that only ever prompts
-    /// looks broken -- it becomes "Open Settings" instead.
-    @State private var hasPrompted = false
+    /// macOS shows its prompt once per app identity, *ever*. After that, asking
+    /// again returns the standing answer and displays nothing, so a button that
+    /// only ever prompts looks broken -- it becomes "Open Settings" instead.
+    ///
+    /// Read from the recorded answer rather than held as `@State`: view state
+    /// resets on every launch, which put the button back to "Grant" long after
+    /// asking could show anything, so the first click did nothing at all. The
+    /// launch-time request records itself the same way, so a prompt spent
+    /// before this pane was ever opened is counted too.
+    private var hasPrompted: Bool { Permissions.hasPrompted(for: pane) }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -585,7 +591,7 @@ private struct PermissionRowView: View {
                             NSWorkspace.shared.open(url)
                         }
                     } else {
-                        hasPrompted = true
+                        Permissions.recordPrompted(for: pane)
                         request { model.refreshPermissions() }
                     }
                 }
@@ -753,7 +759,7 @@ private final class PreviewDelegate: SettingsDelegate {
     func openConfigFile() {}
     func showLog() {}
     func restart() {}
-    func reinstallKeyTap() {}
+    func checkPermissionGrants() {}
     /// A canvas must not open the microphone.
     func setInputPreview(active: Bool) {}
 }
