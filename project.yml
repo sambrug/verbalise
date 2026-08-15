@@ -1,0 +1,99 @@
+# XcodeGen spec: the App Store archive path, and an IDE entry point.
+#
+#   brew install xcodegen && xcodegen
+#
+# SwiftPM is still the build of record -- it is what every commit is tested
+# against and it works with no Xcode at all. But an App Store submission needs
+# an Xcode archive, which SwiftPM cannot produce, so this is required for
+# release rather than merely convenient.
+#
+#   xcodegen
+#   xcodebuild -project Verbalise.xcodeproj -scheme VerbaliseApp \
+#              -configuration Release build
+#
+# The app target compiles *only* the app sources and depends on this directory's
+# own Swift package for the rest. An earlier version listed all three module
+# directories as sources of one target, which cannot work: `import
+# VerbaliseCore` has nothing to resolve when Core is being compiled into the
+# same module that imports it. Consuming the package also means the WhisperKit
+# pin lives in Package.swift alone, so the two builds cannot drift on it.
+
+name: Verbalise
+
+options:
+  bundleIdPrefix: com.sambruggen
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+packages:
+  # This directory's own package. Module structure and every third-party pin
+  # come from Package.swift.
+  VerbalisePackage:
+    path: .
+
+targets:
+  # Named for the target, not the product: the package already has a target
+  # called Verbalise, and two things of that name in one build produce a
+  # collision that is tedious to diagnose. PRODUCT_NAME is what decides the
+  # bundle on disk, and that stays Verbalise -- TCC keys its grants on the
+  # bundle path, so renaming the file would cost the Input Monitoring and
+  # Accessibility grants.
+  VerbaliseApp:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/Verbalise
+      - path: Resources
+        buildPhase: resources
+        excludes:
+          # Both are referenced by build setting. Left in this list they are
+          # also copied into Contents/Resources, which Xcode warns about and
+          # which ships the entitlements file inside the app.
+          - "Info.plist"
+          - "Verbalise.entitlements"
+      # Icon Composer bundle. Xcode's asset pipeline compiles it, the same
+      # way scripts/build-app.sh does with actool directly.
+      - path: Resources/AppIcon.icon
+    dependencies:
+      - package: VerbalisePackage
+        product: VerbaliseCore
+      - package: VerbalisePackage
+        product: VerbaliseSpeech
+    # Deliberately NOT XcodeGen's `info:` and `entitlements:` blocks. Those
+    # *generate* the files at the given path from the properties listed here --
+    # they overwrite whatever is already there. Running xcodegen with them in
+    # place replaced the hand-written Info.plist with a nine-key stub and
+    # emptied the entitlements to <dict/>, which would have produced an
+    # unsandboxed app with no microphone entitlement and no obvious sign
+    # anything was wrong. Pointing the build settings at the real files
+    # consumes them instead.
+    settings:
+      base:
+        INFOPLIST_FILE: Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Verbalise.entitlements
+        # The plist is the source of truth for these; Xcode would otherwise
+        # inject its own defaults over the top.
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        PRODUCT_BUNDLE_IDENTIFIER: com.sambruggen.verbalise
+        PRODUCT_NAME: Verbalise
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        ENABLE_APP_SANDBOX: YES
+        ENABLE_HARDENED_RUNTIME: NO
+        # The same local identity scripts/build-app.sh uses. TCC ties grants to
+        # the signature, so sharing it means Xcode builds and script builds do
+        # not each need their own Input Monitoring and Accessibility grants.
+        #
+        # Replace both of these for an App Store archive: "Apple Distribution"
+        # and the real team ID.
+        CODE_SIGN_IDENTITY: "Verbalise Dev"
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: ""
+
+# No test target here on purpose. The package's own tests are the suite, they
+# run under `swift test`, and Xcode surfaces them from the package dependency --
+# a second test target would be a copy that can rot.

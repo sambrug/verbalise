@@ -22,15 +22,24 @@ an unintended change.
 ## Build & test
 
 ```bash
-make test                       # recording-lifecycle and streaming tests
-.venv/bin/python3 menubar.py    # run from source
-make app && make install        # build dist/Open Whisper.app and copy to /Applications
+make test           # the full test suite, fast, no Xcode needed
+make app            # build + sign build/Verbalise.app
+make install        # copy it to /Applications/Verbalise.app
 ```
 
 `/Applications` is writable by the `admin` group without `sudo` on a normal
 single-admin-user Mac — check with `ls -ld /Applications` before assuming
-`make install`'s `sudo` step is actually required.
+`sudo` is required.
 
-Run `make test` after any change to `daemon.py` or `menubar.py`; it's fast
-and covers real failure modes (wedged audio devices, dead mics, stalled
-recordings), not just happy paths.
+Run `make test` after any change to Sources/ — it covers real failure modes
+(wedged audio devices, dead mics, stalled recordings), not just happy paths.
+
+Reinstalling to a new path or with a new signing identity voids the TCC
+grants (Input Monitoring, Accessibility); the stable "Verbalise Dev"
+identity from `make signing-cert` is what lets ordinary rebuilds keep them.
+
+## The legacy Python app
+
+`legacy-python/` is the original implementation, self-contained and
+deprecated. Don't reference it from anything outside that directory, and
+don't spend effort maintaining it.

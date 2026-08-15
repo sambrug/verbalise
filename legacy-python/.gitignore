@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+
+# Compiled overlay binary (built by setup.sh / build_app.sh)
+overlay
+
+# py2app build outputs
+build/
+dist/
+*.egg-info/
