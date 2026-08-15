@@ -1,19 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!--
-    Privacy manifest. Required for App Store submission since May 2024.
-
-    Every answer here is "none", and that is the honest answer rather than a
-    convenient one: transcription runs on this Mac, the only network call the
-    app makes is fetching a speech model from Hugging Face, and nothing about
-    what is said or typed leaves the container.
-
-    NSPrivacyAccessedAPITypes is empty because none of the required-reason
-    categories apply -- no UserDefaults, no file timestamps, no disk space, no
-    system boot time, no active keyboard. Re-check this against WhisperKit
-    before an archive: it is built from source through SwiftPM, so its API use
-    counts as ours rather than being covered by its own manifest.
--->
 <plist version="1.0">
 <dict>
 	<key>NSPrivacyTracking</key>
