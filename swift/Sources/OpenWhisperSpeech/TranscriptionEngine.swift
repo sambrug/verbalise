@@ -29,6 +29,24 @@ public actor TranscriptionEngine: Transcriber {
 
     private var whisperKit: WhisperKit?
     private var loadedModel: TranscriptionModel?
+
+    /// The load currently running, and the tier it is loading.
+    ///
+    /// An actor is re-entrant at every `await`, and loading suspends for
+    /// seconds. Without somewhere to record that a load is already in flight,
+    /// each caller arriving during that window sees `whisperKit == nil`, decides
+    /// no model is loaded, and starts its own -- and there are several callers
+    /// by design: the launch preload, the parallel wake when a dictation starts,
+    /// and one per streaming chunk. Those loads then contend, so each takes far
+    /// longer than it would alone, which widens the window, which admits more of
+    /// them. Observed in the wild as a model that loads in 1.5s taking 57s, or
+    /// simply never finishing.
+    private var loadTask: Task<Void, Error>?
+    private var loadingModel: TranscriptionModel?
+    /// Distinguishes "my load finished" from "mine was replaced", without
+    /// relying on task identity.
+    private var loadGeneration = 0
+
     private var settings: Settings
     private let onPhase: @Sendable (Phase) -> Void
 
@@ -149,14 +167,43 @@ public actor TranscriptionEngine: Transcriber {
         return nil
     }
 
-    /// Downloads if needed, then loads. Safe to call repeatedly.
+    /// Downloads if needed, then loads. Safe to call repeatedly, and safe to
+    /// call concurrently: callers arriving while a load is running wait on that
+    /// load rather than starting another.
     public func ensureLoaded() async throws {
         let model = settings.transcriptionModel
         if whisperKit != nil, loadedModel == model { return }
 
+        // Join the load already in flight rather than racing it.
+        if let loadTask, loadingModel == model {
+            try await loadTask.value
+            return
+        }
+
+        // A different tier was asked for mid-load, so that load's result is no
+        // longer wanted.
+        loadTask?.cancel()
+
+        loadGeneration &+= 1
+        let generation = loadGeneration
+        let task = Task { try await self.performLoad(model) }
+        loadTask = task
+        loadingModel = model
+        defer {
+            // Only if it is still ours: a newer load may have replaced it while
+            // this one was suspended.
+            if loadGeneration == generation {
+                loadTask = nil
+                loadingModel = nil
+            }
+        }
+        try await task.value
+    }
+
+    private func performLoad(_ model: TranscriptionModel) async throws {
         let variant = model.whisperKitModelName
         let wasCold = whisperKit == nil
-        unload()
+        clearModel()
 
         // Download and load are timed separately. Folding them together makes
         // a nine-minute first run look like a nine-minute model load, which is
@@ -196,7 +243,12 @@ public actor TranscriptionEngine: Transcriber {
             load: true,
             download: false
         )
-        whisperKit = try await WhisperKit(config)
+        let loaded = try await WhisperKit(config)
+        // Cancelled while this was loading -- the tier changed, or the model was
+        // unloaded outright. Installing it now would put back the very thing the
+        // caller asked to be rid of.
+        try Task.checkCancellation()
+        whisperKit = loaded
         loadedModel = model
 
         // Performance parity with the Python (commit c778fd6), which logged
@@ -217,7 +269,20 @@ public actor TranscriptionEngine: Transcriber {
         onPhase(.ready)
     }
 
+    /// Drops the loaded model, and abandons any load still running: an unload
+    /// while loading means the result is no longer wanted, and letting it land
+    /// afterwards would silently undo the unload.
     public func unload() {
+        loadTask?.cancel()
+        loadTask = nil
+        loadingModel = nil
+        clearModel()
+    }
+
+    /// The state half of `unload`, without the cancellation -- `performLoad`
+    /// calls this to clear the way for itself, and must not cancel the task it
+    /// is itself running inside.
+    private func clearModel() {
         whisperKit = nil
         loadedModel = nil
         onPhase(.idle)
