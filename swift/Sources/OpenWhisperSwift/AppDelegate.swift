@@ -49,6 +49,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildStack()
         startKeyTap()
         loadStats()
+        observePermissionGrants()
+
+        // Ask for Input Monitoring once, on the first launch that could still
+        // be answered.
+        //
+        // The prompt is the smaller half of what this call is for.
+        // `CGRequestListenEventAccess` is also the app's only opportunity to be
+        // *registered* in System Settings' Input Monitoring list at all, and
+        // macOS does not always take it. Never calling it makes the absence
+        // certain rather than intermittent -- anyone who opens that pane before
+        // touching ours would find nothing there to switch on, and would have to
+        // add the app by hand with `+`.
+        let prompting = !Permissions.hasInputMonitoring
+            && !Permissions.hasPrompted(for: .inputMonitoring)
+        if prompting {
+            Permissions.recordPrompted(for: .inputMonitoring)
+            Permissions.requestInputMonitoring()
+        }
 
         // Before anything else the user might try. Without a granted trigger
         // key the app is silently inert, which is exactly the confusion the
@@ -58,7 +76,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // menu-bar hover away, which is tedious when checking a layout and
             // impossible from a script.
             showSettings()
-        } else {
+        } else if !prompting {
+            // Skipped only on the one launch that just put the system prompt on
+            // screen -- our window and Apple's asking at the same moment is the
+            // collision this ordering exists to avoid. It can happen once per
+            // install, because the request above can only prompt once; on every
+            // later launch this branch runs as before.
             SettingsWindow.showIfPermissionsMissing(delegate: self)
         }
 
@@ -81,6 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         idleTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
             MainActor.assumeIsolated {
                 guard let self = AppDelegate.shared else { return }
+                self.checkPermissionGrants()
                 let minutes = self.settings.advanced.modelIdleUnloadMinutes
                 let recording = self.dictationState != .idle
                 Task { await self.lifecycle.maybeUnload(
@@ -88,6 +112,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 ) }
             }
         }
+    }
+
+    /// Last seen Input Monitoring state, so the grant can be acted on the
+    /// moment it lands rather than only noticed.
+    private var hadInputMonitoring = Permissions.hasInputMonitoring
+
+    /// Watches for Input Monitoring arriving while nothing is open to notice.
+    ///
+    /// The Settings window polls too, but it stops the moment it closes -- and
+    /// the path this app most often takes is the one that ends outside it:
+    /// macOS frequently fails to register the app in the Input Monitoring list,
+    /// so the user adds it by hand in System Settings, long after our window
+    /// was dismissed. A tap built before the grant existed never delivers an
+    /// event, so without a check that outlives the window the trigger key stays
+    /// dead until the app happens to be relaunched, with nothing saying so.
+    ///
+    /// Becoming active covers coming back from System Settings; the idle timer
+    /// covers a menu bar app that is never activated at all.
+    private func observePermissionGrants() {
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            MainActor.assumeIsolated {
+                AppDelegate.shared?.checkPermissionGrants()
+            }
+        }
+    }
+
+    func checkPermissionGrants() {
+        let hasIt = Permissions.hasInputMonitoring
+        defer { hadInputMonitoring = hasIt }
+        guard hasIt, !hadInputMonitoring else { return }
+        log("permissions: Input Monitoring granted, rebuilding the key tap")
+        reinstallKeyTap()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -256,9 +316,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keyTap?.stop()
         keyTap = nil
 
-        if !Permissions.hasInputMonitoring {
-            Permissions.requestInputMonitoring()
-        }
+        // No permission request here: this runs again on every rebuild, and by
+        // then the grant either exists or the answer is already standing.
+        // `applicationDidFinishLaunching` owns the one first-run request.
         guard let combo = settings.triggerCombo else {
             log("config: trigger_key '\(settings.triggerKey)' is invalid, key tap not started")
             menu?.show(alert: "'\(settings.triggerKey)' isn't a trigger key Open Whisper recognises.")

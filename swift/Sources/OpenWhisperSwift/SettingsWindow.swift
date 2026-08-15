@@ -26,8 +26,10 @@ protocol SettingsDelegate: AnyObject {
     func showLog()
     func restart()
 
-    /// Input Monitoring has just been granted; the key tap needs rebuilding.
-    func reinstallKeyTap()
+    /// Re-read the grants and rebuild the key tap if Input Monitoring has just
+    /// landed. Owned by the app, not the window, so that a grant made after the
+    /// window closes is still acted on.
+    func checkPermissionGrants()
 
     /// Opens the microphone to drive the input level meter, and closes it
     /// again. Refused while a dictation is running.
@@ -255,10 +257,6 @@ final class SettingsModel: ObservableObject {
         launchesAtLogin = LoginItem.isEnabled
     }
 
-    /// Last seen Input Monitoring state, so the grant can be acted on the
-    /// moment it lands rather than only noticed.
-    private var hadInputMonitoring = Permissions.hasInputMonitoring
-
     func refreshPermissions() {
         permissionsRevision &+= 1
 
@@ -268,12 +266,11 @@ final class SettingsModel: ObservableObject {
         // Monitoring, watches the row tick green, and finds the trigger key
         // still does nothing -- with no reason given and no way to guess that
         // relaunching is the fix.
-        let hasIt = Permissions.hasInputMonitoring
-        if hasIt, !hadInputMonitoring {
-            log("permissions: Input Monitoring granted, rebuilding the key tap")
-            delegate?.reinstallKeyTap()
-        }
-        hadInputMonitoring = hasIt
+        //
+        // The detection itself lives in the app, which also checks on becoming
+        // active and on a timer: this window's poll is the fast path while it
+        // happens to be open, not the only one.
+        delegate?.checkPermissionGrants()
     }
 
     var permissionsNeedAttention: Bool {

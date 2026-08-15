@@ -68,4 +68,28 @@ public enum Permissions {
     public static func settingsURL(for pane: SettingsPane) -> URL? {
         URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane.rawValue)")
     }
+
+    // MARK: - Whether the system prompt has already been spent
+
+    /// macOS shows its prompt once per app identity, *ever*. Every later
+    /// request returns the standing answer and displays nothing at all.
+    ///
+    /// That single fact drives two decisions in this app -- whether a launch
+    /// can prompt (and so collide with a window we are about to open), and
+    /// whether the Permissions pane's button should offer to ask or to open
+    /// System Settings. Both are wrong if the answer resets when the app does,
+    /// so it is recorded here rather than held in view state.
+    private static let promptedKey = "PermissionsPrompted"
+
+    public static func hasPrompted(for pane: SettingsPane) -> Bool {
+        let seen = UserDefaults.standard.stringArray(forKey: promptedKey) ?? []
+        return seen.contains(pane.rawValue)
+    }
+
+    public static func recordPrompted(for pane: SettingsPane) {
+        var seen = UserDefaults.standard.stringArray(forKey: promptedKey) ?? []
+        guard !seen.contains(pane.rawValue) else { return }
+        seen.append(pane.rawValue)
+        UserDefaults.standard.set(seen, forKey: promptedKey)
+    }
 }
