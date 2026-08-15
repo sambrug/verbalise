@@ -51,14 +51,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if model == settings.transcriptionModel {
                 preloadModel()
             } else {
-                Task { await preparer.prepare(model) }
+                Task { try? await preparer.ensurePrepared(model) }
             }
         }
     }
 
     /// Compiles downloaded-but-unselected tiers in the background, so
     /// switching to them later is seconds, not minutes.
-    private lazy var preparer = ModelPreparer { inFlight in
+    private lazy var preparer = ModelPreparer.live { inFlight in
         Task { @MainActor in
             AppDelegate.shared?.note(prepares: inFlight)
         }
@@ -732,7 +732,7 @@ extension AppDelegate: SettingsDelegate {
         // clearing, the fast load if the user switches back).
         if modelChanged, enginePhase == .preparing {
             let abandoned = old.transcriptionModel
-            Task { await preparer.prepare(abandoned) }
+            Task { try? await preparer.ensurePrepared(abandoned) }
         }
 
         Task { [engine, controller, newSettings] in
