@@ -290,11 +290,12 @@ private struct SpeechModelPane: View {
                 // Only while it is happening: a permanent paragraph about a
                 // once-per-download event would be noise the rest of the time.
                 if model.rows.contains(where: \.isCompiling) {
-                    Text("macOS is compiling this model for the Neural Engine, "
-                         + "which makes transcription fast. It happens once after "
-                         + "each download and takes a few minutes. Leave Open "
-                         + "Whisper running — dictation will work as soon as "
-                         + "it's done.")
+                    Text("macOS is compiling for the Neural Engine, which makes "
+                         + "transcription fast. It happens once after each "
+                         + "download and takes a few minutes. Compiling runs in "
+                         + "the background — you can keep dictating with any "
+                         + "model that's already ready. Leave Open Whisper "
+                         + "running.")
                     .settingsFootnote()
                 }
             }
@@ -766,7 +767,7 @@ private final class PreviewDelegate: SettingsDelegate {
     var downloadedModels: Set<TranscriptionModel> = [.balanced]
     var modelDownloads: [TranscriptionModel: Double?] = [.accurate: 0.62]
     var removableModels: Set<TranscriptionModel> = []
-    var compilingModel: TranscriptionModel?
+    var compilingModels: Set<TranscriptionModel> = []
 
     let inputPreview = InputPreview()
 

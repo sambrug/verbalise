@@ -149,7 +149,7 @@ struct ModelCatalogTests {
         let rows = ModelCatalog.rows(
             selected: .balanced,
             downloaded: [.balanced],
-            compiling: .balanced
+            compiling: [.balanced]
         )
         let balanced = rows.first { $0.model == .balanced }
         #expect(balanced?.availability == .compiling)
@@ -159,15 +159,29 @@ struct ModelCatalogTests {
         #expect(balanced?.progress == nil, "the compile has no measurable progress")
     }
 
-    @Test("The compile only marks the model actually compiling")
+    @Test("The compile only marks the models actually compiling")
     func compilingDoesNotSpread() {
         let rows = ModelCatalog.rows(
             selected: .balanced,
             downloaded: [.balanced, .fast],
-            compiling: .balanced
+            compiling: [.balanced]
         )
         #expect(rows.first { $0.model == .fast }?.availability == .ready)
         #expect(rows.first { $0.model == .fast }?.isCompiling == false)
+    }
+
+    @Test("A background compile shows on a model that is not selected")
+    func backgroundCompileShows() {
+        // Downloads and compiles are background lifecycle steps: a tier can
+        // compile while dictation carries on with the current model, and the
+        // pane must show that rather than a "Ready" it cannot yet honour.
+        let rows = ModelCatalog.rows(
+            selected: .balanced,
+            downloaded: [.balanced, .accurate],
+            compiling: [.accurate]
+        )
+        #expect(rows.first { $0.model == .balanced }?.availability == .inUse)
+        #expect(rows.first { $0.model == .accurate }?.availability == .compiling)
     }
 
     @Test("A download whose size is not yet known still reads as a download")

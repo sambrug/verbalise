@@ -15,10 +15,12 @@ public enum ModelAvailability: Equatable, Sendable {
     case ready
     /// Being fetched. `fraction` is nil until the total size is known.
     case downloading(fraction: Double?)
-    /// On disk, selected, and being compiled for the Neural Engine — the
-    /// one-off first load after a download, minutes long, during which
-    /// dictation is refused. Shown so the wait has a face and an explanation
-    /// rather than looking like a selected model doing nothing.
+    /// On disk and being compiled for the Neural Engine — the one-off,
+    /// minutes-long step after a download. For the selected model this is the
+    /// wait dictation is gated behind; for any other it is a background step
+    /// quietly making the tier instant to switch to. Shown either way, so the
+    /// wait has a face and an explanation rather than looking like a model
+    /// doing nothing.
     case compiling
     /// Not on disk and not being fetched.
     case absent
@@ -147,14 +149,14 @@ public enum ModelCatalog {
     ///   - downloading: in-flight downloads and their progress.
     ///   - removable: which models have a deletable downloaded copy. A subset
     ///     of `downloaded`: the bundled tier is present but not removable.
-    ///   - compiling: the model whose first-use Neural Engine compile is
-    ///     running, if one is.
+    ///   - compiling: models whose first-use Neural Engine compile is running
+    ///     — the selected one via the engine, others in the background.
     public static func rows(
         selected: TranscriptionModel,
         downloaded: Set<TranscriptionModel>,
         downloading: [TranscriptionModel: Double?] = [:],
         removable: Set<TranscriptionModel> = [],
-        compiling: TranscriptionModel? = nil
+        compiling: Set<TranscriptionModel> = []
     ) -> [ModelRow] {
         TranscriptionModel.allCases.map { model in
             ModelRow(
@@ -176,7 +178,7 @@ public enum ModelCatalog {
         selected: TranscriptionModel,
         downloaded: Set<TranscriptionModel>,
         downloading: [TranscriptionModel: Double?],
-        compiling: TranscriptionModel? = nil
+        compiling: Set<TranscriptionModel> = []
     ) -> ModelAvailability {
         // Downloading wins over selected. Choosing a model that is not on disk
         // both selects it and starts the fetch, and during that window the
@@ -189,7 +191,7 @@ public enum ModelCatalog {
         guard downloaded.contains(model) else { return .absent }
         // Compiling wins over "In use" for the same honesty: the badge would
         // claim a model that cannot yet transcribe anything.
-        if model == compiling { return .compiling }
+        if compiling.contains(model) { return .compiling }
         return model == selected ? .inUse : .ready
     }
 

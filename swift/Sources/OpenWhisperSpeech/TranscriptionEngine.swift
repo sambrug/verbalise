@@ -287,17 +287,21 @@ public actor TranscriptionEngine: Transcriber {
             download: false
         )
         let loaded = try await WhisperKit(config)
+
+        // Stamped before the cancellation check, deliberately: the compile
+        // happened whether or not anyone still wants the result. Switching
+        // tiers mid-compile cancels this load, but macOS finishes and caches
+        // the compile anyway — so the stamp must say so, or coming back to
+        // this model would present the whole multi-minute wait again for a
+        // load that will actually take seconds.
+        ModelPreparationStamp.recordPrepared(variant: variant, folder: folder)
+
         // Cancelled while this was loading -- the tier changed, or the model was
         // unloaded outright. Installing it now would put back the very thing the
         // caller asked to be rid of.
         try Task.checkCancellation()
         whisperKit = loaded
         loadedModel = model
-
-        // Only after the whole load, prewarm included, has survived: the
-        // compile is finished, so from here these files really do load in
-        // seconds.
-        ModelPreparationStamp.recordPrepared(variant: variant, folder: folder)
 
         // Performance parity with the Python (commit c778fd6), which logged
         // cold vs warm load separately. Peak GPU memory was MLX-specific and
