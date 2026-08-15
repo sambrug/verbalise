@@ -48,25 +48,26 @@ final class OverlayModel: ObservableObject {
     /// Symbols without being them -- so they missed the optical sizing Apple
     /// applies at small sizes, and they had to be loaded from disk at runtime.
     ///
-    /// `circle.fill` is the universal record indicator: QuickTime, Voice Memos,
-    /// every recorder. `record.circle` reads as a button to press rather than a
-    /// state, which is wrong for a readout.
+    /// `record.circle.fill` is the record button's own mark -- a dot inside a
+    /// ring. A plain `circle.fill` is the more literal "recording" indicator,
+    /// but at pill size the ring gives the glyph an outline to sit inside,
+    /// which stops a solid disc dominating the waveform beside it.
     ///
     /// `sparkles.2` is the same idea as the `sparkles` in the Speech Model
     /// settings pane -- Apple's mark for on-device intelligence -- in the
     /// two-star cut, which sits better beside a waveform than the three.
     var symbolName: String {
         switch currentState {
-        case "recording": "circle.fill"
+        case "recording": "record.circle.fill"
         case "transcribing", "cleaning": "sparkles.2"
-        default: "circle.fill"
+        default: "record.circle.fill"
         }
     }
 
     /// Sized per symbol, not once for both.
     ///
-    /// A solid disc carries far more ink than an outline of the same nominal
-    /// size, so `circle.fill` at the size that suits `sparkles` reads as
+    /// The record mark and the sparkles carry different amounts of ink at the
+    /// same nominal size, so one number for both left the recording state
     /// shouting next to the waveform. Optical sizing balances weights within a
     /// symbol; across two symbols this different it still needs a hand.
     var symbolSize: CGFloat {
