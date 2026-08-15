@@ -14,6 +14,9 @@ protocol StatusMenuDelegate: AnyObject {
 
     func clearRecentTranscripts()
     func showSettings()
+    /// Straight to the Speech Model pane — where whatever the status line is
+    /// reporting (a download, the first-use compile) is shown and explained.
+    func showSpeechModelSettings()
 }
 
 @MainActor
@@ -149,6 +152,13 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     }
 
     func show(state: DictationState) {
+        // States are labels, not controls; only statuses (below) are
+        // clickable. Clearing the action covers an autoenabling menu, the
+        // explicit flag covers a manual one.
+        stateItem.action = nil
+        stateItem.target = nil
+        stateItem.isEnabled = false
+        stateItem.toolTip = nil
         switch state {
         case .idle:
             stateItem.title = readyTitle
@@ -177,8 +187,60 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         return "Ready — hold \(combo)"
     }
 
-    func show(status: String) {
+    /// Statuses, unlike states, are clickable: every one of them is the model
+    /// doing something, and the Speech Model pane is where that something has
+    /// a face and an explanation. Same reasoning as the alert row's click,
+    /// without adding a second row to carry it.
+    func show(status: String, hint: String? = nil) {
         stateItem.title = status
+        stateItem.target = self
+        stateItem.action = #selector(showModelSettings)
+        stateItem.isEnabled = true
+        let click = "Click to open the Speech Model settings."
+        stateItem.toolTip = hint.map { "\($0)\n\n\(click)" } ?? click
+    }
+
+    // MARK: - Compile pulse
+
+    private var pulseTimer: Timer?
+    private var pulseStart: Date?
+
+    /// Breathes the icon between its filled and outlined forms while the
+    /// model compiles for the Neural Engine.
+    ///
+    /// The compile is minutes long and the menu bar is the app's only always-
+    /// visible surface, so this is what draws the eye to it; the words live
+    /// behind the click. A gentle 1.6s cycle, with the swap between the two
+    /// glyphs made at the dimmest point of an alpha fade so it reads as one
+    /// smooth breath rather than a blink.
+    func setPulsing(_ pulsing: Bool) {
+        if pulsing {
+            guard pulseTimer == nil else { return }
+            pulseStart = Date()
+            pulseTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) {
+                [weak self] _ in
+                MainActor.assumeIsolated { self?.pulseTick() }
+            }
+        } else {
+            guard pulseTimer != nil else { return }
+            pulseTimer?.invalidate()
+            pulseTimer = nil
+            pulseStart = nil
+            statusItem.button?.alphaValue = 1
+            // Callers re-assert the right icon via show(state:) straight after;
+            // this just guarantees no outlined frame outlives the pulse.
+            showIdleIcon()
+        }
+    }
+
+    private func pulseTick() {
+        guard let start = pulseStart, let button = statusItem.button else { return }
+        let phase = sin(Date().timeIntervalSince(start) * .pi * 2 / 1.6)
+        setIcon(
+            phase >= 0 ? "waveform.circle.fill" : "waveform.circle",
+            describing: "Compiling speech model"
+        )
+        button.alphaValue = 0.55 + 0.45 * abs(phase)
     }
 
     func noteDictationCompleted() {
@@ -294,6 +356,10 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     @objc private func showSettings() {
         delegate?.showSettings()
+    }
+
+    @objc private func showModelSettings() {
+        delegate?.showSpeechModelSettings()
     }
 
     @objc private func showAbout() {

@@ -15,6 +15,11 @@ public enum ModelAvailability: Equatable, Sendable {
     case ready
     /// Being fetched. `fraction` is nil until the total size is known.
     case downloading(fraction: Double?)
+    /// On disk, selected, and being compiled for the Neural Engine — the
+    /// one-off first load after a download, minutes long, during which
+    /// dictation is refused. Shown so the wait has a face and an explanation
+    /// rather than looking like a selected model doing nothing.
+    case compiling
     /// Not on disk and not being fetched.
     case absent
 }
@@ -57,7 +62,7 @@ public struct ModelRow: Equatable, Sendable {
         case .downloading(let fraction):
             return "\(model.summary) · \(model.variantName) · "
                 + ModelCatalog.progressText(for: model, fraction: fraction)
-        case .inUse, .ready, .absent:
+        case .inUse, .ready, .compiling, .absent:
             return "\(model.summary) · \(model.variantName) · \(model.approximateDownloadSize)"
         }
     }
@@ -68,6 +73,7 @@ public struct ModelRow: Equatable, Sendable {
         case .inUse: nil                            // A badge, not a button.
         case .ready: isRemovable ? .remove : nil    // Selecting is a row tap.
         case .downloading: .cancel
+        case .compiling: nil                        // A badge; nothing to cancel.
         case .absent: .download
         }
     }
@@ -93,7 +99,19 @@ public struct ModelRow: Equatable, Sendable {
 
     /// Shown instead of a button when the model is the one in use.
     public var badge: String? {
-        availability == .inUse ? "In use" : nil
+        switch availability {
+        case .inUse: "In use"
+        case .compiling: "Compiling…"
+        case .ready, .downloading, .absent: nil
+        }
+    }
+
+    /// Whether the first-use compile is running, for the row's indeterminate
+    /// bar. Always indeterminate: macOS gives no progress for the compile,
+    /// and a bar pinned at zero for minutes reads as a hang — the very thing
+    /// this row exists to dispel.
+    public var isCompiling: Bool {
+        availability == .compiling
     }
 
     /// 0...1 for the inline bar, or nil when there is no bar to draw.
@@ -129,11 +147,14 @@ public enum ModelCatalog {
     ///   - downloading: in-flight downloads and their progress.
     ///   - removable: which models have a deletable downloaded copy. A subset
     ///     of `downloaded`: the bundled tier is present but not removable.
+    ///   - compiling: the model whose first-use Neural Engine compile is
+    ///     running, if one is.
     public static func rows(
         selected: TranscriptionModel,
         downloaded: Set<TranscriptionModel>,
         downloading: [TranscriptionModel: Double?] = [:],
-        removable: Set<TranscriptionModel> = []
+        removable: Set<TranscriptionModel> = [],
+        compiling: TranscriptionModel? = nil
     ) -> [ModelRow] {
         TranscriptionModel.allCases.map { model in
             ModelRow(
@@ -142,7 +163,8 @@ public enum ModelCatalog {
                     of: model,
                     selected: selected,
                     downloaded: downloaded,
-                    downloading: downloading
+                    downloading: downloading,
+                    compiling: compiling
                 ),
                 isRemovable: removable.contains(model)
             )
@@ -153,7 +175,8 @@ public enum ModelCatalog {
         of model: TranscriptionModel,
         selected: TranscriptionModel,
         downloaded: Set<TranscriptionModel>,
-        downloading: [TranscriptionModel: Double?]
+        downloading: [TranscriptionModel: Double?],
+        compiling: TranscriptionModel? = nil
     ) -> ModelAvailability {
         // Downloading wins over selected. Choosing a model that is not on disk
         // both selects it and starts the fetch, and during that window the
@@ -164,6 +187,9 @@ public enum ModelCatalog {
             return .downloading(fraction: fraction)
         }
         guard downloaded.contains(model) else { return .absent }
+        // Compiling wins over "In use" for the same honesty: the badge would
+        // claim a model that cannot yet transcribe anything.
+        if model == compiling { return .compiling }
         return model == selected ? .inUse : .ready
     }
 

@@ -371,21 +371,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let model = settings.transcriptionModel
             var downloading = cachedDownloads.keys.contains(model)
             if case .downloading = enginePhase { downloading = true }
+            // A refusal's on-screen half is the pill's waiting flash; the
+            // words are the menu's status line, which already reports the
+            // download or the compile and opens the Speech Model pane when
+            // clicked. No alert row: the status line is the one place the
+            // menu says what the model is doing (#8 feedback).
             if downloading {
                 log("dictation: refused, model still downloading")
-                refuse(with: "Still downloading the speech model. Dictation will work once it's done.")
+                pill?.flash(state: "waiting")
                 return
             }
             // Asked of the stamp rather than the phase, because the phase
             // cannot warn about work that has not started yet: the compile may
             // still be queued behind a preload, or not be underway at all.
             if enginePhase != .ready, !TranscriptionEngine.isPrepared(model) {
-                log("dictation: refused, model needs its first-use preparation")
-                refuse(with: "Preparing the speech model for first use — a one-off step "
-                    + "that can take several minutes. Leave Open Whisper running; "
-                    + "dictation will work once it's done.")
-                // Make sure that preparation is actually underway. Repeat
-                // presses join the load already in flight.
+                log("dictation: refused, model needs its first-use compile")
+                pill?.flash(state: "waiting")
+                // Make sure that compile is actually underway. Repeat presses
+                // join the load already in flight.
                 preloadModel()
                 return
             }
@@ -409,21 +412,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if settings.soundEnabled { Sounds.playStop() }
             Task { await controller.stopAndTranscribe() }
         }
-    }
-
-    /// Whether the last alert shown was a "not ready yet" refusal, so it can
-    /// be taken down the moment the model is ready rather than lingering,
-    /// minutes stale, until the next successful dictation clears it.
-    private var refusedWhileUnready = false
-
-    private func refuse(with message: String) {
-        refusedWhileUnready = true
-        menu?.show(alert: message)
-        // The alert lives behind the menu bar icon, so on its own a refusal
-        // is a keypress that visibly does nothing — no pill, no sound —
-        // which is indistinguishable from the app being dead. The flash is
-        // the on-screen half of the answer; the menu has the words.
-        pill?.flash(state: "waiting")
     }
 
     // MARK: - Events
@@ -479,11 +467,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .downloading, .preparing, .loading:
             break
         case .ready:
-            // Whatever a refusal said about waiting is over now.
-            if refusedWhileUnready {
-                refusedWhileUnready = false
-                menu?.clearAlert()
-            }
             // The idle countdown starts from the moment there is something to
             // unload, not from launch.
             Task { await lifecycle.noteLoaded() }
@@ -507,6 +490,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// outranks engine phases, and an idle dictation shows whatever the
     /// engine is doing.
     private func refreshStatusLine() {
+        // The pulse is the compile's eye-catcher, so it runs exactly as long
+        // as the compile does. First, so the icon it resets on the way out is
+        // immediately re-asserted by whichever show() call follows.
+        menu?.setPulsing(dictationState == .idle && enginePhase == .preparing)
+
         switch dictationState {
         case .recording:
             menu?.show(state: .recording)
@@ -521,7 +509,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 menu?.show(status: fraction.map { "Downloading model \(Int($0 * 100))%" }
                     ?? "Downloading model…")
             case .preparing:
-                menu?.show(status: "Preparing model for first use…")
+                menu?.show(
+                    status: "Compiling speech model…",
+                    hint: "macOS is preparing the model for this Mac's Neural "
+                        + "Engine — a one-off step after each download that "
+                        + "takes a few minutes. Dictation is paused until it "
+                        + "finishes."
+                )
             case .loading:
                 menu?.show(status: "Loading model…")
             case .ready, .idle:
@@ -540,6 +534,10 @@ extension AppDelegate: StatusMenuDelegate {
 
     func showSettings() {
         SettingsWindow.show(delegate: self)
+    }
+
+    func showSpeechModelSettings() {
+        SettingsWindow.show(pane: .speechModel, delegate: self)
     }
 }
 
@@ -566,6 +564,12 @@ extension AppDelegate: SettingsDelegate {
             all.updateValue(fraction, forKey: settings.transcriptionModel)
         }
         return all
+    }
+
+    /// The model mid first-use compile, if one is. Only ever the selected
+    /// model: the engine loads nothing else.
+    var compilingModel: TranscriptionModel? {
+        enginePhase == .preparing ? settings.transcriptionModel : nil
     }
 
     func downloadModel(_ model: TranscriptionModel) {
