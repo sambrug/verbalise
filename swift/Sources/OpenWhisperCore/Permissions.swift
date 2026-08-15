@@ -1,45 +1,55 @@
 import AVFoundation
 import CoreGraphics
 import Foundation
+import IOKit.hid
 
-/// Ports `check_accessibility` / `check_microphone` (daemon.py:1858-1927) onto
-/// the APIs that are actually correct for what this app does.
+/// Ports the permission checks onto the APIs that match what the app actually
+/// does. Input Monitoring and Accessibility/PostEvent are separate TCC grants.
 ///
-/// The Python app used `AXIsProcessTrusted`, which reports the Accessibility
-/// grant. That is the wrong signal and is sandbox-banned besides (APP_STORE.md
-/// §1): we never use AX. What we need is two separate CoreGraphics grants --
-/// Input Monitoring to *observe* the trigger key, and PostEvent to *synthesise*
-/// the keystrokes that insert text. They are distinct TCC records and a user
-/// can grant one without the other, so they are checked and requested apart.
+/// The CoreGraphics request functions are useful for event taps, but macOS does
+/// not reliably register a sandboxed app in the Input Monitoring list when they
+/// are used alone. IOHIDRequestAccess is Apple's lower-level API for requesting
+/// keyboard listen/post access and is the API Apple documents for this purpose.
 public enum Permissions {
 
     // MARK: - Input Monitoring (read the trigger key)
 
     /// True when this app may observe key events. Does not prompt.
     public static var hasInputMonitoring: Bool {
-        CGPreflightListenEventAccess()
+        if #available(macOS 10.15, *) {
+            return IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)
+                == kIOHIDAccessTypeGranted
+        }
+        return true
     }
 
-    /// Prompts for Input Monitoring if it has never been asked for.
-    ///
-    /// macOS shows the system prompt only once per app; afterwards this
-    /// returns the standing answer and the user must change it in System
-    /// Settings. Returns the grant state, not "did we prompt".
+    /// Requests Input Monitoring through the HID privacy API. This also gives
+    /// macOS the opportunity to register the app in the Input Monitoring list.
     @discardableResult
     public static func requestInputMonitoring() -> Bool {
-        CGRequestListenEventAccess()
+        if #available(macOS 10.15, *) {
+            return IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+        }
+        return true
     }
 
     // MARK: - PostEvent (synthesise keystrokes)
 
     /// True when this app may post synthetic key events. Does not prompt.
     public static var hasPostEvent: Bool {
-        CGPreflightPostEventAccess()
+        if #available(macOS 10.15, *) {
+            return IOHIDCheckAccess(kIOHIDRequestTypePostEvent)
+                == kIOHIDAccessTypeGranted
+        }
+        return true
     }
 
     @discardableResult
     public static func requestPostEvent() -> Bool {
-        CGRequestPostEventAccess()
+        if #available(macOS 10.15, *) {
+            return IOHIDRequestAccess(kIOHIDRequestTypePostEvent)
+        }
+        return true
     }
 
     // MARK: - Microphone
@@ -64,7 +74,6 @@ public enum Permissions {
         case microphone = "Privacy_Microphone"
     }
 
-    /// URL for the onboarding window's "Open System Settings" buttons.
     public static func settingsURL(for pane: SettingsPane) -> URL? {
         URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane.rawValue)")
     }
