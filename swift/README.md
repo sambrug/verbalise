@@ -103,6 +103,26 @@ release:
 
 `Resources/Models/` is gitignored. The script needs 5 GB free.
 
+## The app icon
+
+`Resources/AppIcon.icon` is an Icon Composer bundle — a gradient, two layered
+SVGs and a translucency setting, which macOS 26 renders as a Liquid Glass icon.
+`actool` compiles it at build time into an `Assets.car`, and emits a flat
+`.icns` alongside for macOS 14 and 15.
+
+`Resources/AppIcon-fallback.icns` is that flat output, committed so a machine
+without Xcode still ships the current artwork. Regenerate it after editing the
+icon:
+
+```bash
+./Scripts/build-app.sh
+cp build/OpenWhisperSwift.app/Contents/Resources/AppIcon.icns \
+   Resources/AppIcon-fallback.icns
+```
+
+`assets/AppIcon.icns` in the repo root is the Python app's icon and is no
+longer used here.
+
 ## Support flags
 
 ```bash

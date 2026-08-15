@@ -68,9 +68,19 @@ if [ -d "Resources/AppIcon.icon" ] && xcrun --find actool >/dev/null 2>&1; then
     /usr/libexec/PlistBuddy -c "Merge $ICON_WORK/icon.plist" "$BUNDLE/Contents/Info.plist"
     rm -rf "$ICON_WORK"
     echo "    icon: compiled AppIcon.icon (Liquid Glass + .icns fallback)"
-elif [ -f "$REPO_ROOT/assets/AppIcon.icns" ]; then
-    cp "$REPO_ROOT/assets/AppIcon.icns" "$BUNDLE/Contents/Resources/AppIcon.icns"
-    echo "    icon: AppIcon.icns (actool unavailable, no Liquid Glass icon)"
+elif [ -f "Resources/AppIcon-fallback.icns" ]; then
+    # Same artwork, flat. actool emits this alongside the Assets.car, and the
+    # copy is committed so a machine without Xcode still ships the current
+    # icon rather than whatever the Python app happens to be using.
+    #
+    # Regenerate it after changing AppIcon.icon:
+    #   ./Scripts/build-app.sh && cp \
+    #     build/OpenWhisperSwift.app/Contents/Resources/AppIcon.icns \
+    #     Resources/AppIcon-fallback.icns
+    cp "Resources/AppIcon-fallback.icns" "$BUNDLE/Contents/Resources/AppIcon.icns"
+    /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" \
+        "$BUNDLE/Contents/Info.plist" >/dev/null 2>&1 || true
+    echo "    icon: AppIcon-fallback.icns (no actool, so no Liquid Glass icon)"
 fi
 
 # The pill's icons. Loaded by path at runtime rather than compiled in, exactly
