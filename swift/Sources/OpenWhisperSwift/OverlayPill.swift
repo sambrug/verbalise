@@ -273,14 +273,28 @@ struct OverlayContentView: View {
 
     private let cyan = Color(red: 10 / 255, green: 170 / 255, blue: 210 / 255)
 
-    /// A cool cast on the glass, kept far below the point of looking coloured.
+    /// The app icon's own gradient, lifted from `AppIcon.icon/icon.json`.
     ///
-    /// The alpha is the strength: `tintColor` pulls the material toward this
-    /// colour rather than painting it, so anything approaching a normal opacity
-    /// reads as a blue pill instead of glass with a temperature.
-    private static let glassTint = NSColor(
-        srgbRed: 0.62, green: 0.78, blue: 1.0, alpha: 0.07
+    /// Display P3 because that is the space the icon was authored in; sRGB
+    /// values would land slightly duller than the icon they are borrowed from.
+    /// The stop at 0.7 rather than 1.0 is the icon's too -- the blue never
+    /// quite reaches the bottom edge.
+    private static let iconGradient = LinearGradient(
+        colors: [
+            Color(.displayP3, red: 0.85764, green: 0.63442, blue: 1.0),
+            Color(.displayP3, red: 0.33716, green: 0.68604, blue: 0.81592),
+        ],
+        startPoint: UnitPoint(x: 0.5, y: 0),
+        endPoint: UnitPoint(x: 0.5, y: 0.7)
     )
+
+    /// How much of that gradient is painted over the glass.
+    ///
+    /// This is the knob. `tintColor` on the glass would be the native way to
+    /// colour it, but it takes one colour and this is two, so the gradient is
+    /// a layer on top instead -- which means it *paints* rather than pulling
+    /// the material's temperature, and goes garish far sooner. Low.
+    private static let gradientStrength: Double = 0.12
 
     private let iconWidth: CGFloat = 20
     private let timerWidth: CGFloat = 35
@@ -344,7 +358,17 @@ struct OverlayContentView: View {
                 // cuts into the specular edge the material draws just inside
                 // its own bounds -- which is the bevel this was all for.
                 pill.background {
-                    AppKitGlassView(style: .regular, tint: Self.glassTint)
+                    AppKitGlassView(style: .regular, tint: nil)
+                        .overlay {
+                            // Inset by a point so the rim is left alone. The
+                            // specular edge sits just inside the material's
+                            // bounds, and painting over it is exactly what the
+                            // note above says not to do.
+                            Self.iconGradient
+                                .opacity(Self.gradientStrength)
+                                .clipShape(Capsule())
+                                .padding(1)
+                        }
                         .allowsHitTesting(false)
                 }
             } else {
