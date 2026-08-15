@@ -20,14 +20,16 @@ public enum Permissions {
         CGPreflightListenEventAccess()
     }
 
-    /// Prompts for Input Monitoring if it has never been asked for.
-    ///
-    /// macOS shows the system prompt only once per app; afterwards this
-    /// returns the standing answer and the user must change it in System
-    /// Settings. Returns the grant state, not "did we prompt".
+    /// Requests Input Monitoring. If macOS has already consumed its one-time
+    /// prompt for this app, open the exact System Settings pane instead of
+    /// leaving the user staring at a button that appears to do nothing.
     @discardableResult
     public static func requestInputMonitoring() -> Bool {
-        CGRequestListenEventAccess()
+        let granted = CGRequestListenEventAccess()
+        if !granted, !hasInputMonitoring {
+            openSystemSettings(for: .inputMonitoring)
+        }
+        return granted
     }
 
     // MARK: - PostEvent (synthesise keystrokes)
@@ -39,7 +41,11 @@ public enum Permissions {
 
     @discardableResult
     public static func requestPostEvent() -> Bool {
-        CGRequestPostEventAccess()
+        let granted = CGRequestPostEventAccess()
+        if !granted, !hasPostEvent {
+            openSystemSettings(for: .accessibility)
+        }
+        return granted
     }
 
     // MARK: - Microphone
@@ -53,7 +59,11 @@ public enum Permissions {
     }
 
     public static func requestMicrophone() async -> Bool {
-        await AVCaptureDevice.requestAccess(for: .audio)
+        let granted = await AVCaptureDevice.requestAccess(for: .audio)
+        if !granted, !hasMicrophone {
+            openSystemSettings(for: .microphone)
+        }
+        return granted
     }
 
     // MARK: - Deep links into the exact System Settings panes
@@ -67,5 +77,13 @@ public enum Permissions {
     /// URL for the onboarding window's "Open System Settings" buttons.
     public static func settingsURL(for pane: SettingsPane) -> URL? {
         URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane.rawValue)")
+    }
+
+    /// Opens the relevant privacy pane. Kept here so every permission request
+    /// follows the same fallback behaviour and callers do not need to know the
+    /// System Settings URL scheme.
+    private static func openSystemSettings(for pane: SettingsPane) {
+        guard let url = settingsURL(for: pane) else { return }
+        NSWorkspace.shared.open(url)
     }
 }
