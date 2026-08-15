@@ -79,6 +79,14 @@ public actor ModelDownloader {
         }
         let task = Task {
             try await download(model, report)
+            // The transfer layer may sprint through a cancel — a small model
+            // on a fast connection can finish before the cancellation
+            // propagates (seen live: 216MB in seven seconds). The cancel's
+            // cleanup is already discarding these files, so returning
+            // "success" here would tell every waiter the model is on disk at
+            // the exact moment it is being deleted. Cancelled is cancelled,
+            // however far the bytes got.
+            try Task.checkCancellation()
         }
         tasks[model] = task
 

@@ -124,6 +124,31 @@ struct ModelDownloaderTests {
         #expect(script.partialsRemoved.isEmpty)
     }
 
+    @Test("A transfer that outruns its cancel still counts as cancelled")
+    func completedTransferStillHonoursCancel() async throws {
+        // Seen live: a small model on a fast connection finishes before the
+        // cancellation reaches the transfer layer. The files are discarded by
+        // the cancel's cleanup, so the waiter must hear "cancelled", not
+        // "downloaded" — the designed outcome (revert the staged switch)
+        // hangs off that distinction.
+        let script = DownloadScript(honourCancellation: false)
+        let downloader = ModelDownloader(
+            isDownloaded: { _ in false },
+            download: { model, report in try await script.run(model, report) },
+            removePartial: { script.notePartialRemoved($0) }
+        )
+
+        let waiter = Task { try await downloader.ensureDownloaded(.fast) }
+        try? await Task.sleep(for: .milliseconds(50))
+
+        await downloader.cancel(.fast)
+        script.finishCurrent()   // The transfer completes as if never cancelled.
+
+        await #expect(throws: CancellationError.self) { try await waiter.value }
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(script.partialsRemoved == [.fast])
+    }
+
     @Test("Progress from a cancelled transfer cannot repaint the row")
     func staleProgressIsIgnored() async throws {
         let script = DownloadScript()
@@ -185,9 +210,11 @@ struct ModelDownloaderTests {
         private var lastReport: (@Sendable (Double) -> Void)?
         private var removed: [TranscriptionModel] = []
         private let failFirst: Bool
+        private let honourCancellation: Bool
 
-        init(failFirst: Bool = false) {
+        init(failFirst: Bool = false, honourCancellation: Bool = true) {
             self.failFirst = failFirst
+            self.honourCancellation = honourCancellation
         }
 
         var invocations: Int {
@@ -221,9 +248,10 @@ struct ModelDownloaderTests {
                     lock.unlock()
                 }
             }
-            // The real transfer throws when its task is cancelled; the fake
-            // must too, or cancellation would look like success.
-            try Task.checkCancellation()
+            // A well-behaved transfer throws when its task is cancelled — but
+            // a fast one can also complete before the cancel reaches it,
+            // which is what honourCancellation: false simulates.
+            if honourCancellation { try Task.checkCancellation() }
             if failFirst, invocation == 1 { throw Failure() }
         }
 
