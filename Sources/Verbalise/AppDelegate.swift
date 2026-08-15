@@ -19,6 +19,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = SettingsStore()
     private let stats = StatsStore()
 
+    /// The model dictation uses right now.
+    ///
+    /// `settings.transcriptionModel` is the *selection* — intent, persisted
+    /// the moment it is made. This is what is actually loaded and gating the
+    /// trigger key, and it only ever moves ready-to-ready: selecting a tier
+    /// that still needs downloading or compiling stages the switch, keeps
+    /// dictation on the current model, and swaps automatically the moment the
+    /// pipeline finishes. Before that split, selecting an unready tier
+    /// killed dictation outright for however many minutes the download and
+    /// compile took — clicking between models was the most dangerous thing
+    /// in the app.
+    private var activeModel: TranscriptionModel = .bundled
+
+    /// What the engine is told: the user's settings with the *active* model,
+    /// not the selected one. Language and vocabulary changes flow through
+    /// immediately; the model only changes when a switch actually lands.
+    private var engineSettings: Settings {
+        var engineSettings = settings
+        engineSettings.transcriptionModel = activeModel
+        return engineSettings
+    }
+
+    /// A switch that was ready to land mid-dictation waits here for idle.
+    private var activationPending = false
+
     private var controller: DictationController?
     private var session: AudioSession?
     private var engine: TranscriptionEngine?
@@ -100,8 +125,76 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             log("model: provisioning \(model.rawValue) failed — \(failure)")
             return
         }
-        if cancelled { return }
-        if model == settings.transcriptionModel { loadEngine() }
+        if cancelled {
+            // Cancelling the switch target's download is cancelling the
+            // switch: the selection goes back to the model that was never
+            // going anywhere. Leaving it pointed at a tier nothing is
+            // fetching would strand the pane's checkmark on a model that
+            // never arrives.
+            if model == settings.transcriptionModel, model != activeModel {
+                var reverted = settings
+                reverted.transcriptionModel = activeModel
+                apply(settings: reverted)
+            }
+            return
+        }
+        guard model == settings.transcriptionModel else { return }
+        if model == activeModel {
+            // The launch (or retry) provision of the model already in charge:
+            // nothing to swap, just load it.
+            loadEngine()
+        } else {
+            activateSelectedModel()
+        }
+    }
+
+    /// Lands a staged switch: makes the selected model the active one.
+    ///
+    /// Only ever called once the selected model is fully provisioned. Waits
+    /// out a dictation in flight — swapping the engine's model under a live
+    /// recording trades a working transcription for a race — and lands on the
+    /// next return to idle.
+    private func activateSelectedModel() {
+        let selected = settings.transcriptionModel
+        guard selected != activeModel else {
+            activationPending = false
+            return
+        }
+        guard TranscriptionEngine.isPrepared(selected) else {
+            // Ready-to-ready only. If the files changed since the pipeline
+            // finished (deleted mid-switch, a stamp invalidated), run it
+            // again rather than activating a model that cannot transcribe.
+            provision(selected)
+            return
+        }
+        guard dictationState == .idle else {
+            activationPending = true
+            return
+        }
+        activationPending = false
+        activeModel = selected
+        log("model: switching dictation to \(selected.rawValue)")
+        syncEngine(thenLoad: true)
+        refreshStatusLine()
+        SettingsWindow.refreshIfOpen()
+    }
+
+    /// Pushes the current `engineSettings` to the engine, in order.
+    ///
+    /// Chained rather than fired as independent tasks: two pushes racing —
+    /// say, a settings change and the activation it triggered — could land
+    /// out of order and leave the engine on yesterday's model while the gate
+    /// checks today's. The chain makes last-call-wins actually true.
+    private var engineSync: Task<Void, Never>?
+
+    private func syncEngine(thenLoad: Bool = false) {
+        let snapshot = engineSettings
+        let previous = engineSync
+        engineSync = Task { [engine] in
+            await previous?.value
+            await engine?.apply(settings: snapshot)
+            if thenLoad { AppDelegate.shared?.loadEngine() }
+        }
     }
 
     private var cachedStats = UsageStats()
@@ -273,6 +366,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !result.validation.isValid {
             menu?.show(alert: result.validation.errors.joined(separator: " · "))
         }
+        // At launch the selection is the active model by definition: there is
+        // no previous model to keep dictating with, so if it needs work the
+        // trigger key gates until the pipeline finishes, exactly as before.
+        activeModel = settings.transcriptionModel
         log("config: model=\(settings.transcriptionModel.rawValue) trigger=\(settings.triggerKey)")
     }
 
@@ -315,7 +412,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func buildStack() {
         pill = OverlayPill(style: settings.overlayStyle, meter: meter)
 
-        let engine = TranscriptionEngine(settings: settings) { phase in
+        let engine = TranscriptionEngine(settings: engineSettings) { phase in
             Task { @MainActor in AppDelegate.shared?.show(phase: phase) }
         }
 
@@ -331,6 +428,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         self.engine = engine
         self.controller = controller
+        // The old chain belongs to the engine it was pushing to.
+        engineSync = nil
         refreshStatusLine()
     }
 
@@ -418,10 +517,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // dictation gets it.
             inputPreview.stop()
 
-            // Refuse while the model cannot transcribe yet. Recording into a
+            // Refuse while the *active* model cannot transcribe yet — with a
+            // staged switch in flight the active model is by construction
+            // ready, so this only ever gates the first provision of a fresh
+            // selection (typically first launch). Recording into a
             // multi-minute wait produces a dictation that looks hung, and the
-            // user has no way to tell it apart from a crash — better to say so
-            // and let them try again in a moment. Two waits qualify: a
+            // user has no way to tell it apart from a crash — better to say
+            // so and let them try again in a moment. Two waits qualify: a
             // download, and the ANE compile on the first load of freshly
             // downloaded files — and the stamp check covers both, since a
             // model with no complete folder cannot be stamped. A *cached*
@@ -432,13 +534,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // and both started when the wait did, not at this keypress. (An
             // alert row and a pill flash were tried and retired here — one
             // broke the menu's pattern, the other the pill's shape.)
-            let model = settings.transcriptionModel
-            if !TranscriptionEngine.isPrepared(model) {
+            if !TranscriptionEngine.isPrepared(activeModel) {
                 log("dictation: refused, the speech model isn't ready")
                 // Make sure the missing work is actually underway. Joins
                 // whatever is already running; a repeat press cannot start
                 // anything twice.
-                provision(model)
+                provision(settings.transcriptionModel)
                 return
             }
             if settings.soundEnabled { Sounds.playStart() }
@@ -471,6 +572,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch event {
         case .state(let state):
             dictationState = state
+            // A switch that was ready mid-dictation lands now, before the
+            // status line redraws, so the menu never shows the old model as
+            // current for a frame longer than it is.
+            if state == .idle, activationPending {
+                activateSelectedModel()
+            }
             refreshStatusLine()
 
         case .pill(let command):
@@ -525,6 +632,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshStatusLine()
     }
 
+    /// Whether the trigger key would be refused right now: the active model's
+    /// files are missing or haven't been through their first-use compile.
+    /// With a staged switch in flight the active model stays ready, so this
+    /// is true only while the selection itself is being provisioned for the
+    /// first time.
+    private var dictationGated: Bool {
+        !TranscriptionEngine.isPrepared(activeModel)
+    }
+
+    /// One extra line of the compile/download hint while a switch is staged,
+    /// so nobody wonders whether they can dictate meanwhile. Nil when the
+    /// working tier IS the selection, where the wait really does gate.
+    private var stagedHint: String? {
+        guard settings.transcriptionModel != activeModel else { return nil }
+        return "Dictation keeps using \(activeModel.displayName) until then."
+    }
+
     /// The status line's one writer.
     ///
     /// The dictation state and the engine phase both wanted this line, and
@@ -533,22 +657,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the model was still minutes from loaded (#8). Deriving the line from
     /// both here means neither can contradict the other: dictation activity
     /// outranks engine phases, and an idle dictation shows whatever the
-    /// pipeline is doing.
-    /// Whether the selected model is mid-download or mid-compile — the two
-    /// waits dictation is gated behind. Background work on *other* tiers
-    /// deliberately doesn't count: dictation works throughout, so there is
-    /// nothing to pull the eye to; the Speech Model pane shows it to whoever
-    /// goes looking.
-    private var selectedModelBusy: Bool {
-        cachedDownloads.keys.contains(settings.transcriptionModel)
-            || cachedPrepares.contains(settings.transcriptionModel)
-    }
-
+    /// pipeline is doing to the *selected* model. Background work on other
+    /// tiers deliberately doesn't show: dictation works throughout, so there
+    /// is nothing to pull the eye to; the Speech Model pane shows it to
+    /// whoever goes looking.
     private func refreshStatusLine() {
-        // The pulse runs exactly as long as the selected model is unusable.
-        // First, so the icon it resets on the way out is immediately
-        // re-asserted by whichever show() call follows.
-        menu?.setPulsing(dictationState == .idle && selectedModelBusy)
+        // The pulse runs exactly as long as dictation is gated — the one
+        // signal that means "the key won't work yet". A staged switch never
+        // pulses: dictation keeps working, and the status line alone carries
+        // the progress. First, so the icon it resets on the way out is
+        // immediately re-asserted by whichever show() call follows.
+        menu?.setPulsing(dictationState == .idle && dictationGated)
 
         switch dictationState {
         case .recording:
@@ -575,16 +694,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func show(downloadStatus fraction: Double?) {
-        menu?.show(status: fraction.map { "Downloading model \(Int($0 * 100))%" }
-            ?? "Downloading model…")
+        let name = settings.transcriptionModel.displayName
+        menu?.show(
+            status: fraction.map { "Downloading \(name) \(Int($0 * 100))%" }
+                ?? "Downloading \(name)…",
+            hint: stagedHint
+        )
     }
 
     private func showCompilingStatus() {
+        let explainer = "macOS is preparing the model for this Mac's Neural Engine — "
+            + "a one-off step after each download that takes a few minutes."
+        // Only a gating compile pauses dictation; a staged one explains
+        // itself instead.
+        let tail = stagedHint ?? "Dictation is paused until it finishes."
         menu?.show(
-            status: "Compiling speech model…",
-            hint: "macOS is preparing the model for this Mac's Neural Engine — "
-                + "a one-off step after each download that takes a few minutes. "
-                + "Dictation is paused until it finishes."
+            status: "Compiling \(settings.transcriptionModel.displayName)…",
+            hint: "\(explainer) \(tail)"
         )
     }
 }
@@ -611,6 +737,10 @@ extension AppDelegate: SettingsDelegate {
 
     var currentSettings: Settings { settings }
     var currentStats: UsageStats { cachedStats }
+
+    /// The model dictation actually uses right now — behind the selection
+    /// while a staged switch is still downloading or compiling.
+    var activeTranscriptionModel: TranscriptionModel { activeModel }
 
     /// Which tiers are on disk. Asked fresh rather than cached: a download that
     /// finished a second ago must show as available, and the answer is a
@@ -645,10 +775,13 @@ extension AppDelegate: SettingsDelegate {
     }
 
     var removableModels: Set<TranscriptionModel> {
-        // Never the model in use: removing what is loaded would leave the next
-        // dictation with nothing to transcribe with, and the pane offers no
-        // way to ask for that.
-        TranscriptionEngine.removableModels.subtracting([settings.transcriptionModel])
+        // Never the model in use, and never the selection: removing what is
+        // loaded would leave the next dictation with nothing to transcribe
+        // with, and removing a staged switch's target would delete the files
+        // its own pipeline is working on. The pane offers no way to ask for
+        // either.
+        TranscriptionEngine.removableModels
+            .subtracting([settings.transcriptionModel, activeModel])
     }
 
     func removeModel(_ model: TranscriptionModel) {
@@ -708,19 +841,26 @@ extension AppDelegate: SettingsDelegate {
             log("config: audio input changed, rebuilding the session")
         }
 
-        let modelChanged = old.transcriptionModel != newSettings.transcriptionModel
-
-        Task { [engine, controller, newSettings] in
-            await engine?.apply(settings: newSettings)
-            await controller?.apply(settings: newSettings)
-            // Provision only once the engine holds the new settings, so the
-            // load at the end of the pipeline can only ever load the right
-            // model. Every step joins work already in flight — a tier
-            // mid-download or mid-compile keeps its place and its progress
-            // row; nothing restarts.
-            if modelChanged {
-                AppDelegate.shared?.provision(newSettings.transcriptionModel)
+        // A selection change either lands now (the tier is ready: a
+        // few-second engine swap) or stages: the pipeline downloads and
+        // compiles in the background while dictation carries on with the
+        // active model, and finishProvision lands the switch when it's done.
+        // Every step joins work already in flight — a tier mid-download or
+        // mid-compile keeps its place and its progress row; nothing restarts.
+        if old.transcriptionModel != newSettings.transcriptionModel {
+            if TranscriptionEngine.isPrepared(newSettings.transcriptionModel) {
+                activateSelectedModel()
+            } else {
+                provision(newSettings.transcriptionModel)
             }
+        }
+
+        // The engine gets the settings with the *active* model substituted —
+        // decided above — so language and vocabulary changes apply
+        // immediately while the model only moves when a switch lands.
+        syncEngine()
+        Task { [controller, newSettings] in
+            await controller?.apply(settings: newSettings)
         }
 
         if audioChanged {

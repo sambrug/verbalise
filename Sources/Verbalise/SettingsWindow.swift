@@ -14,10 +14,15 @@ protocol SettingsDelegate: AnyObject {
     var currentStats: UsageStats { get }
     func apply(settings: VerbaliseCore.Settings)
 
+    /// The model dictation actually uses right now. Differs from
+    /// `currentSettings.transcriptionModel` while a staged switch is still
+    /// downloading or compiling — the checkmark shows the selection, the
+    /// "In use" badge shows this.
+    var activeTranscriptionModel: TranscriptionModel { get }
+
     var downloadedModels: Set<TranscriptionModel> { get }
     var modelDownloads: [TranscriptionModel: Double?] { get }
-    /// Models mid first-use Neural Engine compile — the selected one via the
-    /// engine, others compiling in the background.
+    /// Models queued or running in the first-use Neural Engine compile queue.
     var compilingModels: Set<TranscriptionModel> { get }
     func downloadModel(_ model: TranscriptionModel)
     func cancelModelDownload(_ model: TranscriptionModel)
@@ -228,6 +233,9 @@ final class SettingsModel: ObservableObject {
     @Published private(set) var settings: VerbaliseCore.Settings
     @Published private(set) var stats = UsageStats()
     @Published private(set) var rows: [ModelRow] = []
+    /// What dictation uses right now; trails the selection during a staged
+    /// switch, and the pane's footer explains the difference while it lasts.
+    @Published private(set) var activeModel: TranscriptionModel = .bundled
     @Published private(set) var inputDevices: [String] = []
     @Published private(set) var launchesAtLogin = false
 
@@ -250,8 +258,9 @@ final class SettingsModel: ObservableObject {
         guard let delegate else { return }
         settings = delegate.currentSettings
         stats = delegate.currentStats
+        activeModel = delegate.activeTranscriptionModel
         rows = ModelCatalog.rows(
-            selected: settings.transcriptionModel,
+            active: activeModel,
             downloaded: delegate.downloadedModels,
             downloading: delegate.modelDownloads,
             removable: delegate.removableModels,
@@ -318,14 +327,11 @@ final class SettingsModel: ObservableObject {
     }
 
     func select(_ model: TranscriptionModel) {
+        // Choosing a model you do not have is a request for it: the apply
+        // path stages the switch, provisions the tier (download, then
+        // compile), and swaps dictation over the moment it is ready. Nothing
+        // extra to kick here.
         change { $0.transcriptionModel = model }
-        // Choosing a model you do not have is a request for it. Without this the
-        // row would sit at "not downloaded" while the engine quietly fetched it
-        // on the next dictation, which is the hang this pane exists to make
-        // visible.
-        if !(delegate?.downloadedModels.contains(model) ?? true) {
-            download(model)
-        }
     }
 
     func setLaunchesAtLogin(_ enabled: Bool) {

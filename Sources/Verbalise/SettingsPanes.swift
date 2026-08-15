@@ -287,16 +287,21 @@ private struct SpeechModelPane: View {
                 Text("Transcription runs on this Mac. Nothing you dictate leaves your device.")
                     .settingsFootnote()
             } footer: {
-                // Only while it is happening: a permanent paragraph about a
-                // once-per-download event would be noise the rest of the time.
-                if model.rows.contains(where: \.isCompiling) {
-                    Text("macOS is compiling for the Neural Engine, which makes "
-                         + "transcription fast. It happens once after each "
-                         + "download and takes a few minutes. Compiling runs in "
-                         + "the background — you can keep dictating with any "
-                         + "model that's already ready. Leave Verbalise "
-                         + "running.")
-                    .settingsFootnote()
+                // Only while they are happening: permanent paragraphs about
+                // occasional events would be noise the rest of the time.
+                VStack(alignment: .leading, spacing: 6) {
+                    if let stagedNote {
+                        Text(stagedNote).settingsFootnote()
+                    }
+                    if model.rows.contains(where: \.isCompiling) {
+                        Text("macOS is compiling for the Neural Engine, which "
+                             + "makes transcription fast. It happens once after "
+                             + "each download and takes a few minutes. Compiling "
+                             + "runs in the background — you can keep dictating "
+                             + "with any model that's already ready. Leave "
+                             + "Verbalise running.")
+                        .settingsFootnote()
+                    }
                 }
             }
 
@@ -322,6 +327,17 @@ private struct SpeechModelPane: View {
     /// code has to stay selected rather than quietly reading as something else.
     private var languages: [Language] {
         Language.pickerOptions(including: model.settings.language)
+    }
+
+    /// Names the staged switch while one is in flight: the checkmark and the
+    /// "In use" badge sit on different rows during it, and this one sentence
+    /// is what keeps that from reading as a glitch.
+    private var stagedNote: String? {
+        let selected = model.settings.transcriptionModel
+        guard selected != model.activeModel else { return nil }
+        return "\(selected.displayName) takes over from "
+            + "\(model.activeModel.displayName) as soon as it's ready. "
+            + "Keep dictating with \(model.activeModel.displayName) meanwhile."
     }
 }
 
@@ -761,6 +777,7 @@ private extension SettingsModel {
 private final class PreviewDelegate: SettingsDelegate {
     var currentSettings = VerbaliseCore.Settings()
     var currentStats = UsageStats(totalWords: 12_480, totalRecordings: 312)
+    var activeTranscriptionModel: TranscriptionModel = .balanced
 
     /// Enough variety to see every row state at once: one in use, one
     /// downloading, one absent.
