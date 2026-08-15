@@ -261,6 +261,15 @@ struct FailingTranscriber: Transcriber {
     func transcribe(_ audio: [Float]) async throws -> String { throw Failure() }
 }
 
+/// Fails with a human-readable explanation, the way the engine's notReady
+/// does. Proves the message reaches the user instead of a generic "failed".
+struct ExplainingFailingTranscriber: Transcriber {
+    struct Failure: LocalizedError {
+        var errorDescription: String? { "The speech model isn't ready yet." }
+    }
+    func transcribe(_ audio: [Float]) async throws -> String { throw Failure() }
+}
+
 /// First call is slow, so completion order differs from feed order. Proves the
 /// streamer restores order by index rather than by whichever finished first.
 final class OutOfOrderTranscriber: Transcriber, @unchecked Sendable {

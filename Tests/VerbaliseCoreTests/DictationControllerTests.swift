@@ -240,6 +240,33 @@ struct DictationControllerTests {
         #expect(transcriber.calls.first == Self.audio.count)
     }
 
+    @Test("a failure that explains itself reaches the user in its own words")
+    func explainedFailureKeepsItsMessage() async {
+        let h = Self.makeHarness(transcriber: ExplainingFailingTranscriber())
+        await h.controller._prepareForTest(stream: HealthyStream(), audio: Self.audio)
+        await h.controller.stopAndTranscribe()
+
+        let errors = h.events.events.compactMap {
+            if case .error(let message) = $0 { return message } else { return nil }
+        }
+        #expect(errors == ["The speech model isn't ready yet."])
+        // Failed or not, the dictation is over: state resets, pill hides.
+        #expect(await h.controller.state == .idle)
+        #expect(h.events.pillCommands.last == .hide)
+    }
+
+    @Test("a failure with no message falls back to the generic line")
+    func opaqueFailureStaysGeneric() async {
+        let h = Self.makeHarness(transcriber: FailingTranscriber())
+        await h.controller._prepareForTest(stream: HealthyStream(), audio: Self.audio)
+        await h.controller.stopAndTranscribe()
+
+        let errors = h.events.events.compactMap {
+            if case .error(let message) = $0 { return message } else { return nil }
+        }
+        #expect(errors == ["Transcription failed."])
+    }
+
     // MARK: - 4. Escape
 
     @Test("escape on a stalled stop: state reset, nothing typed")

@@ -253,7 +253,13 @@ public actor DictationController {
         } catch {
             log("dictation: transcription failed — \(error)")
             guard generation == gen else { return }
-            emit(.error("Transcription failed."))
+            // An error that explains itself is worth passing through: "the
+            // speech model isn't ready" tells the user what to do, where a
+            // generic "failed" reads as a crash. Errors without a prepared
+            // message keep the generic line — raw error dumps are for the
+            // log, not the menu bar.
+            let message = (error as? LocalizedError)?.errorDescription
+            emit(.error(message ?? "Transcription failed."))
         }
 
         finish(gen: gen)
