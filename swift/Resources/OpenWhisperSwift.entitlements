@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Complete set, per swift_migration_plan.md §2. Do not add more.
+	     CGEventTap / CGEvent.post need no entitlement; they are runtime TCC
+	     grants (Input Monitoring and Accessibility/PostEvent). -->
+
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+
+	<!-- Speech model downloads. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+</dict>
+</plist>

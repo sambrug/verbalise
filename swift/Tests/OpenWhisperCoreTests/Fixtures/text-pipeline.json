@@ -1,0 +1,659 @@
+{
+  "_generated_by": "swift/Scripts/generate-fixtures.py",
+  "_oracle": "daemon.py (clean/join/phonetic), menubar.py:654-691 (stats)",
+  "cleanHallucinations": [
+    {
+      "input": "Hello there, this is a normal sentence.",
+      "expected": "Hello there, this is a normal sentence."
+    },
+    {
+      "input": "Book the meeting for Tuesday",
+      "expected": "Book the meeting for Tuesday"
+    },
+    {
+      "input": "",
+      "expected": ""
+    },
+    {
+      "input": "Book the meeting for Tuesday. Thanks for watching!",
+      "expected": "Book the meeting for Tuesday."
+    },
+    {
+      "input": "Book the meeting for Tuesday. Thank you.",
+      "expected": "Book the meeting for Tuesday."
+    },
+    {
+      "input": "Some real content here. Thanks",
+      "expected": "Some real content here."
+    },
+    {
+      "input": "Some real content here. Subscribe",
+      "expected": "Some real content here."
+    },
+    {
+      "input": "Some real content here. Please subscribe.",
+      "expected": "Some real content here."
+    },
+    {
+      "input": "Some real content here. Like and subscribe!",
+      "expected": "Some real content here."
+    },
+    {
+      "input": "Some real content here. Bye",
+      "expected": "Some real content here."
+    },
+    {
+      "input": "Some real content here. Bye for now.",
+      "expected": "Some real content here."
+    },
+    {
+      "input": "Some real content here. See you next time.",
+      "expected": "Some real content here."
+    },
+    {
+      "input": "Some real content here. See you in the next video",
+      "expected": "Some real content here."
+    },
+    {
+      "input": "Real content. Thank you. Thanks for watching.",
+      "expected": "Real content."
+    },
+    {
+      "input": "Real content... Thank you.",
+      "expected": "Real content"
+    },
+    {
+      "input": "Real content. Thank you. ...",
+      "expected": "Real content."
+    },
+    {
+      "input": "Trailing ellipsis...",
+      "expected": "Trailing ellipsis"
+    },
+    {
+      "input": "Trailing unicode ellipsis…",
+      "expected": "Trailing unicode ellipsis"
+    },
+    {
+      "input": "Dot groups at the end. . .",
+      "expected": "Dot groups at the end."
+    },
+    {
+      "input": "Hello there. ...",
+      "expected": "Hello there."
+    },
+    {
+      "input": "Spaced groups ... ... ...",
+      "expected": "Spaced groups"
+    },
+    {
+      "input": "This sentence simply ends.",
+      "expected": "This sentence simply ends."
+    },
+    {
+      "input": "Ends with a question?",
+      "expected": "Ends with a question?"
+    },
+    {
+      "input": "...",
+      "expected": ""
+    },
+    {
+      "input": "…",
+      "expected": ""
+    },
+    {
+      "input": ". . .",
+      "expected": ""
+    },
+    {
+      "input": "   ",
+      "expected": ""
+    },
+    {
+      "input": "Thank you.",
+      "expected": ""
+    },
+    {
+      "input": "Bye.",
+      "expected": ""
+    },
+    {
+      "input": "Real content. THANK YOU!",
+      "expected": "Real content."
+    },
+    {
+      "input": "Real content. thanks for watching",
+      "expected": "Real content."
+    },
+    {
+      "input": "We discussed the subscriber count",
+      "expected": "We discussed the subscriber count"
+    },
+    {
+      "input": "He said goodbye to the team",
+      "expected": "He said goodbye to the team"
+    },
+    {
+      "input": "Region Region Region Region Region Region Region Region",
+      "expected": ""
+    },
+    {
+      "input": "the the the the the the the the the the",
+      "expected": ""
+    },
+    {
+      "input": "spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam",
+      "expected": ""
+    },
+    {
+      "input": "x x x x x x x x x a b c d e f",
+      "expected": ""
+    },
+    {
+      "input": "I said no no no but they went ahead anyway with the plan",
+      "expected": "I said no no no but they went ahead anyway with the plan"
+    },
+    {
+      "input": "very very very good",
+      "expected": "very very very good"
+    }
+  ],
+  "looksLikeRepetitionLoop": [
+    {
+      "input": "Hello there, this is a normal sentence.",
+      "expected": false
+    },
+    {
+      "input": "Book the meeting for Tuesday",
+      "expected": false
+    },
+    {
+      "input": "",
+      "expected": false
+    },
+    {
+      "input": "Book the meeting for Tuesday. Thanks for watching!",
+      "expected": false
+    },
+    {
+      "input": "Book the meeting for Tuesday. Thank you.",
+      "expected": false
+    },
+    {
+      "input": "Some real content here. Thanks",
+      "expected": false
+    },
+    {
+      "input": "Some real content here. Subscribe",
+      "expected": false
+    },
+    {
+      "input": "Some real content here. Please subscribe.",
+      "expected": false
+    },
+    {
+      "input": "Some real content here. Like and subscribe!",
+      "expected": false
+    },
+    {
+      "input": "Some real content here. Bye",
+      "expected": false
+    },
+    {
+      "input": "Some real content here. Bye for now.",
+      "expected": false
+    },
+    {
+      "input": "Some real content here. See you next time.",
+      "expected": false
+    },
+    {
+      "input": "Some real content here. See you in the next video",
+      "expected": false
+    },
+    {
+      "input": "Real content. Thank you. Thanks for watching.",
+      "expected": false
+    },
+    {
+      "input": "Real content... Thank you.",
+      "expected": false
+    },
+    {
+      "input": "Real content. Thank you. ...",
+      "expected": false
+    },
+    {
+      "input": "Trailing ellipsis...",
+      "expected": false
+    },
+    {
+      "input": "Trailing unicode ellipsis…",
+      "expected": false
+    },
+    {
+      "input": "Dot groups at the end. . .",
+      "expected": false
+    },
+    {
+      "input": "Hello there. ...",
+      "expected": false
+    },
+    {
+      "input": "Spaced groups ... ... ...",
+      "expected": false
+    },
+    {
+      "input": "This sentence simply ends.",
+      "expected": false
+    },
+    {
+      "input": "Ends with a question?",
+      "expected": false
+    },
+    {
+      "input": "...",
+      "expected": false
+    },
+    {
+      "input": "…",
+      "expected": false
+    },
+    {
+      "input": ". . .",
+      "expected": false
+    },
+    {
+      "input": "   ",
+      "expected": false
+    },
+    {
+      "input": "Thank you.",
+      "expected": false
+    },
+    {
+      "input": "Bye.",
+      "expected": false
+    },
+    {
+      "input": "Real content. THANK YOU!",
+      "expected": false
+    },
+    {
+      "input": "Real content. thanks for watching",
+      "expected": false
+    },
+    {
+      "input": "We discussed the subscriber count",
+      "expected": false
+    },
+    {
+      "input": "He said goodbye to the team",
+      "expected": false
+    },
+    {
+      "input": "Region Region Region Region Region Region Region Region",
+      "expected": true
+    },
+    {
+      "input": "the the the the the the the the the the",
+      "expected": true
+    },
+    {
+      "input": "spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam spam",
+      "expected": true
+    },
+    {
+      "input": "x x x x x x x x x a b c d e f",
+      "expected": true
+    },
+    {
+      "input": "I said no no no but they went ahead anyway with the plan",
+      "expected": false
+    },
+    {
+      "input": "very very very good",
+      "expected": false
+    }
+  ],
+  "joinStreamingChunks": [
+    {
+      "input": [],
+      "expected": ""
+    },
+    {
+      "input": [
+        ""
+      ],
+      "expected": ""
+    },
+    {
+      "input": [
+        "Just one chunk"
+      ],
+      "expected": "Just one chunk"
+    },
+    {
+      "input": [
+        "I was still talking.",
+        "and continuing on"
+      ],
+      "expected": "I was still talking and continuing on"
+    },
+    {
+      "input": [
+        "First part.",
+        "second part.",
+        "third part"
+      ],
+      "expected": "First part second part third part"
+    },
+    {
+      "input": [
+        "That was the end.",
+        "This is new"
+      ],
+      "expected": "That was the end. This is new"
+    },
+    {
+      "input": [
+        "No punctuation here",
+        "and more text"
+      ],
+      "expected": "No punctuation here and more text"
+    },
+    {
+      "input": [
+        "He said \"that is it.\"",
+        "and then left"
+      ],
+      "expected": "He said \"that is it\" and then left"
+    },
+    {
+      "input": [
+        "A parenthetical (like this.)",
+        "continues here"
+      ],
+      "expected": "A parenthetical (like this) continues here"
+    },
+    {
+      "input": [
+        "Was that it?",
+        "apparently not"
+      ],
+      "expected": "Was that it apparently not"
+    },
+    {
+      "input": [
+        "Stop!",
+        "he shouted"
+      ],
+      "expected": "Stop he shouted"
+    },
+    {
+      "input": [
+        "First chunk.",
+        "   ",
+        "second chunk"
+      ],
+      "expected": "First chunk second chunk"
+    },
+    {
+      "input": [
+        "  padded  ",
+        "  chunks  "
+      ],
+      "expected": "padded chunks"
+    }
+  ],
+  "applyPhoneticCorrections": [
+    {
+      "input": "The ethanol report is due",
+      "corrections": [
+        [
+          "ethanol",
+          "FNOL"
+        ]
+      ],
+      "expected": "The FNOL report is due"
+    },
+    {
+      "input": "ETHANOL and Ethanol and ethanol",
+      "corrections": [
+        [
+          "ethanol",
+          "FNOL"
+        ]
+      ],
+      "expected": "FNOL and FNOL and FNOL"
+    },
+    {
+      "input": "The methanol sample",
+      "corrections": [
+        [
+          "ethanol",
+          "FNOL"
+        ]
+      ],
+      "expected": "The methanol sample"
+    },
+    {
+      "input": "no corrections configured",
+      "corrections": [],
+      "expected": "no corrections configured"
+    },
+    {
+      "input": "",
+      "corrections": [
+        [
+          "a",
+          "b"
+        ]
+      ],
+      "expected": ""
+    },
+    {
+      "input": "alpha beta",
+      "corrections": [
+        [
+          "alpha",
+          "beta"
+        ],
+        [
+          "beta",
+          "gamma"
+        ]
+      ],
+      "expected": "gamma gamma"
+    },
+    {
+      "input": "please file a new claim today",
+      "corrections": [
+        [
+          "new claim",
+          "NewClaim"
+        ]
+      ],
+      "expected": "please file a NewClaim today"
+    },
+    {
+      "input": "the c++ code",
+      "corrections": [
+        [
+          "c++",
+          "C plus plus"
+        ]
+      ],
+      "expected": "the c++ code"
+    },
+    {
+      "input": "costs money",
+      "corrections": [
+        [
+          "money",
+          "$100"
+        ]
+      ],
+      "expected": "costs $100"
+    }
+  ],
+  "formatStats": [
+    {
+      "input": {
+        "total_words": 0,
+        "total_recordings": 0
+      },
+      "expected": "No dictations yet"
+    },
+    {
+      "input": {
+        "total_words": 1,
+        "total_recordings": 1
+      },
+      "expected": "1 words • 1 recordings"
+    },
+    {
+      "input": {
+        "total_words": 12,
+        "total_recordings": 3
+      },
+      "expected": "12 words • 3 recordings"
+    },
+    {
+      "input": {
+        "total_words": 1000,
+        "total_recordings": 42
+      },
+      "expected": "1,000 words • 42 recordings"
+    },
+    {
+      "input": {
+        "total_words": 1234567,
+        "total_recordings": 8901
+      },
+      "expected": "1,234,567 words • 8,901 recordings"
+    },
+    {
+      "input": {
+        "total_words": 50,
+        "total_recordings": 2
+      },
+      "expected": "50 words • 2 recordings"
+    },
+    {
+      "input": {
+        "total_words": 55,
+        "total_recordings": 2
+      },
+      "expected": "55 words • 2 recordings"
+    },
+    {
+      "input": {
+        "total_words": 100,
+        "total_recordings": 5
+      },
+      "expected": "100 words • 5 recordings"
+    },
+    {
+      "input": {
+        "total_words": 3272,
+        "total_recordings": 100
+      },
+      "expected": "3,272 words • 100 recordings"
+    },
+    {
+      "input": {
+        "total_words": 3273,
+        "total_recordings": 100
+      },
+      "expected": "3,273 words • 100 recordings"
+    },
+    {
+      "input": {
+        "total_words": 10000,
+        "total_recordings": 300
+      },
+      "expected": "10,000 words • 300 recordings"
+    }
+  ],
+  "formatTimeSaved": [
+    {
+      "input": {
+        "total_words": 0,
+        "total_recordings": 0
+      },
+      "expected": null
+    },
+    {
+      "input": {
+        "total_words": 1,
+        "total_recordings": 1
+      },
+      "expected": null
+    },
+    {
+      "input": {
+        "total_words": 12,
+        "total_recordings": 3
+      },
+      "expected": null
+    },
+    {
+      "input": {
+        "total_words": 1000,
+        "total_recordings": 42
+      },
+      "expected": "18 minutes saved typing"
+    },
+    {
+      "input": {
+        "total_words": 1234567,
+        "total_recordings": 8901
+      },
+      "expected": "377 hours saved typing"
+    },
+    {
+      "input": {
+        "total_words": 50,
+        "total_recordings": 2
+      },
+      "expected": null
+    },
+    {
+      "input": {
+        "total_words": 55,
+        "total_recordings": 2
+      },
+      "expected": "1 minute saved typing"
+    },
+    {
+      "input": {
+        "total_words": 100,
+        "total_recordings": 5
+      },
+      "expected": "2 minutes saved typing"
+    },
+    {
+      "input": {
+        "total_words": 3272,
+        "total_recordings": 100
+      },
+      "expected": "60 minutes saved typing"
+    },
+    {
+      "input": {
+        "total_words": 3273,
+        "total_recordings": 100
+      },
+      "expected": "1 hour saved typing"
+    },
+    {
+      "input": {
+        "total_words": 10000,
+        "total_recordings": 300
+      },
+      "expected": "3 hours saved typing"
+    }
+  ]
+}
