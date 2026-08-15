@@ -25,7 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Fetches tiers the user asked for but is not using yet. Separate from the
     /// engine, which downloads only what it needs to transcribe right now.
-    private lazy var downloader = ModelDownloader { inFlight in
+    private lazy var downloader = ModelDownloader.live { inFlight in
         Task { @MainActor in
             AppDelegate.shared?.note(downloads: inFlight)
         }
@@ -641,7 +641,7 @@ extension AppDelegate: SettingsDelegate {
     }
 
     func downloadModel(_ model: TranscriptionModel) {
-        Task { await downloader.start(model) }
+        Task { try? await downloader.ensureDownloaded(model) }
     }
 
     func cancelModelDownload(_ model: TranscriptionModel) {
