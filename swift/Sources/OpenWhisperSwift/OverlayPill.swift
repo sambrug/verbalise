@@ -231,24 +231,6 @@ struct OverlayContentView: View {
     /// cannot produce.
     private static let glassStrength: Double = 0.75
 
-    /// A capsule-shaped drop shadow, and nothing else.
-    ///
-    /// `.shadow` on the glass container produced a rectangle: SwiftUI derives a
-    /// shadow from what the view renders, and the container reports its
-    /// rectangular bounds rather than the capsule the material draws inside
-    /// them. Stating the shape is the fix.
-    ///
-    /// The capsule is then punched back out of itself with `destinationOut`,
-    /// leaving only the shadow it cast. Without that, a solid fill would sit
-    /// behind semi-transparent glass and darken the pill from within.
-    private var pillShadow: some View {
-        Capsule()
-            .fill(.black)
-            .shadow(color: .black.opacity(0.28), radius: 10, y: 3)
-            .overlay { Capsule().fill(.black).blendMode(.destinationOut) }
-            .compositingGroup()
-    }
-
     private let iconWidth: CGFloat = 20
     private let timerWidth: CGFloat = 38
 
@@ -340,7 +322,6 @@ struct OverlayContentView: View {
                         Color.clear.glassEffect(.regular.interactive(), in: .capsule)
                     }
                     .opacity(Self.glassStrength)
-                    .background { pillShadow }
                 }
             } else {
                 // macOS 14/15 have no Liquid Glass; the closest the older
