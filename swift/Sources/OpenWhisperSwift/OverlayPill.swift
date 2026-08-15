@@ -57,17 +57,10 @@ final class OverlayModel: ObservableObject {
     /// `sparkles.2` is the same idea as the `sparkles` in the Speech Model
     /// settings pane -- Apple's mark for on-device intelligence -- in the
     /// two-star cut, which sits better beside a waveform than the three.
-    ///
-    /// `hourglass` is the "waiting" state: the trigger key was refused because
-    /// the model is still downloading or compiling, and the pill flashes to
-    /// say so. Everything else about that state -- geometry, resting bars,
-    /// hidden timer -- is the transcribing state's, so the pill's carefully
-    /// balanced layout is not disturbed by a third variant.
     var symbolName: String {
         switch currentState {
         case "recording": "record.circle.fill"
         case "transcribing", "cleaning": "sparkles.2"
-        case "waiting": "hourglass"
         default: "record.circle.fill"
         }
     }
@@ -510,11 +503,6 @@ final class OverlayPill {
 
     func show(state: String = "recording") {
         guard style != .off else { return }
-        // A flash scheduled its own hide; a real show outranks it. Without
-        // this, dictating within a couple of seconds of a refusal would have
-        // the stale hide fire mid-recording and take the live pill down.
-        flashHide?.cancel()
-        flashHide = nil
         makePanelIfNeeded()
         guard let panel, let hostingView else { return }
 
@@ -586,32 +574,12 @@ final class OverlayPill {
     }
 
     func hide() {
-        flashHide?.cancel()
-        flashHide = nil
         model.stopTimer()
         stopSamplingLevels()
         model.visible = false
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             self?.panel?.orderOut(nil)
         }
-    }
-
-    // MARK: Flash
-
-    private var flashHide: DispatchWorkItem?
-
-    /// Shows a state briefly, then hides on its own.
-    ///
-    /// For moments with no lifecycle to hang the pill on: a refused trigger
-    /// key has no recording whose end would hide it, but an alert only ever
-    /// seen behind the menu bar icon makes the refusal look like the app going
-    /// dead (#8). Long enough to read a glyph, short enough not to become
-    /// screen furniture on repeat presses.
-    func flash(state: String, seconds: TimeInterval = 2.5) {
-        show(state: state)
-        let work = DispatchWorkItem { [weak self] in self?.hide() }
-        flashHide = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
     }
 
     func quit() {
@@ -648,12 +616,6 @@ private enum PillPreviewHost {
         return model
     }()
 
-    @MainActor static let waiting: OverlayModel = {
-        let model = OverlayModel()
-        model.currentState = "waiting"
-        model.visible = true
-        return model
-    }()
 }
 
 // `PreviewProvider` rather than the `#Preview` macro: this file imports AppKit
@@ -666,8 +628,6 @@ struct PillPreviews: PreviewProvider {
                 .previewDisplayName("Recording")
             OverlayContentView(model: PillPreviewHost.transcribing)
                 .previewDisplayName("Transcribing")
-            OverlayContentView(model: PillPreviewHost.waiting)
-                .previewDisplayName("Waiting")
         }
         .frame(width: 320, height: 80)
     }

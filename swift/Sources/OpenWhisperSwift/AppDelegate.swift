@@ -371,14 +371,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let model = settings.transcriptionModel
             var downloading = cachedDownloads.keys.contains(model)
             if case .downloading = enginePhase { downloading = true }
-            // A refusal's on-screen half is the pill's waiting flash; the
-            // words are the menu's status line, which already reports the
-            // download or the compile and opens the Speech Model pane when
-            // clicked. No alert row: the status line is the one place the
-            // menu says what the model is doing (#8 feedback).
+            // A refusal shows nothing of its own: the pulsing menu bar icon
+            // and the clickable status line are already reporting the wait,
+            // and both started when the wait did, not at this keypress.
             if downloading {
                 log("dictation: refused, model still downloading")
-                pill?.flash(state: "waiting")
                 return
             }
             // Asked of the stamp rather than the phase, because the phase
@@ -386,7 +383,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // still be queued behind a preload, or not be underway at all.
             if enginePhase != .ready, !TranscriptionEngine.isPrepared(model) {
                 log("dictation: refused, model needs its first-use compile")
-                pill?.flash(state: "waiting")
                 // Make sure that compile is actually underway. Repeat presses
                 // join the load already in flight.
                 preloadModel()
