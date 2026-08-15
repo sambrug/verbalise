@@ -79,17 +79,36 @@ public enum Permissions {
     /// whether the Permissions pane's button should offer to ask or to open
     /// System Settings. Both are wrong if the answer resets when the app does,
     /// so it is recorded here rather than held in view state.
+    ///
+    /// Recorded *against the bundle path*, because that is what TCC keys these
+    /// grants to: move the app and macOS treats it as a new one, forgets the
+    /// grant, and is willing to prompt again (README: "Grants are tied to where
+    /// the app lives, so if you move it you'll be asked again"). Keyed by
+    /// bundle ID alone the record would outlive the thing it describes -- after
+    /// the ordinary swift/build -> /Applications install the app would believe
+    /// its one prompt was already spent, stop asking, and so never call
+    /// `CGRequestListenEventAccess` again at the path that now matters. That
+    /// call is also the app's only chance of being registered in the Input
+    /// Monitoring list, so the cost of getting this wrong is the app never
+    /// appearing there at all. Storing the path invalidates our record exactly
+    /// when TCC invalidates its own.
     private static let promptedKey = "PermissionsPrompted"
 
+    /// Reads as "never prompted" against the older array-shaped value, which is
+    /// the safe direction to fail: one redundant request, rather than a request
+    /// that never happens.
+    private static var promptedPaths: [String: String] {
+        UserDefaults.standard.dictionary(forKey: promptedKey) as? [String: String] ?? [:]
+    }
+
     public static func hasPrompted(for pane: SettingsPane) -> Bool {
-        let seen = UserDefaults.standard.stringArray(forKey: promptedKey) ?? []
-        return seen.contains(pane.rawValue)
+        promptedPaths[pane.rawValue] == Bundle.main.bundlePath
     }
 
     public static func recordPrompted(for pane: SettingsPane) {
-        var seen = UserDefaults.standard.stringArray(forKey: promptedKey) ?? []
-        guard !seen.contains(pane.rawValue) else { return }
-        seen.append(pane.rawValue)
+        var seen = promptedPaths
+        guard seen[pane.rawValue] != Bundle.main.bundlePath else { return }
+        seen[pane.rawValue] = Bundle.main.bundlePath
         UserDefaults.standard.set(seen, forKey: promptedKey)
     }
 }
