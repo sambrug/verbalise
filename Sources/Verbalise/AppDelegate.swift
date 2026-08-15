@@ -11,6 +11,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `self` strongly without a retain cycle through them.
     private static weak var shared: AppDelegate?
 
+    // MARK: - Event delivery
+
+    /// Everything the actors report back — dictation events, engine phases,
+    /// download and compile snapshots — funnelled through one stream and
+    /// consumed in arrival order on the main actor.
+    ///
+    /// Each callback used to spawn its own unstructured `Task { @MainActor }`,
+    /// and independent tasks carry no ordering guarantee: a pill "hide" could
+    /// in principle land before the "transcribing" it was meant to clear,
+    /// leaving the pill on screen forever, and a progress snapshot could
+    /// overwrite a newer one with an older one. The stream's buffer is FIFO,
+    /// which makes "events apply in the order they happened" a property of
+    /// the plumbing rather than a hope about the scheduler.
+    private enum AppEvent {
+        case dictation(DictationEvent)
+        case enginePhase(TranscriptionEngine.Phase)
+        case downloads([TranscriptionModel: Double?])
+        case prepares(Set<TranscriptionModel>)
+    }
+
+    private let events: AsyncStream<AppEvent>
+    private let eventSink: AsyncStream<AppEvent>.Continuation
+    private var eventPump: Task<Void, Never>?
+
+    override init() {
+        (events, eventSink) = AsyncStream.makeStream(of: AppEvent.self)
+        super.init()
+    }
+
+    private func startEventPump() {
+        eventPump = Task { [events] in
+            for await event in events {
+                AppDelegate.shared?.dispatch(event)
+            }
+        }
+    }
+
+    private func dispatch(_ event: AppEvent) {
+        switch event {
+        case .dictation(let event): handle(event)
+        case .enginePhase(let phase): show(phase: phase)
+        case .downloads(let inFlight): note(downloads: inFlight)
+        case .prepares(let inFlight): note(prepares: inFlight)
+        }
+    }
+
     private var menu: StatusMenu?
     private var keyTap: KeyTap?
     private var pill: OverlayPill?
@@ -51,10 +97,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Fetches model files. Every download runs here, whoever asked — the
     /// Settings window, the launch preload, a refused keypress — so progress
     /// has one source and Cancel always has a task to cancel.
-    private lazy var downloader = ModelDownloader.live { inFlight in
-        Task { @MainActor in
-            AppDelegate.shared?.note(downloads: inFlight)
-        }
+    private lazy var downloader = ModelDownloader.live { [eventSink] inFlight in
+        eventSink.yield(.downloads(inFlight))
     }
     private var cachedDownloads: [TranscriptionModel: Double?] = [:]
 
@@ -66,10 +110,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Runs every first-use Neural Engine compile, one at a time. The engine
     /// itself never compiles; it waits for this.
-    private lazy var preparer = ModelPreparer.live { inFlight in
-        Task { @MainActor in
-            AppDelegate.shared?.note(prepares: inFlight)
-        }
+    private lazy var preparer = ModelPreparer.live { [eventSink] inFlight in
+        eventSink.yield(.prepares(inFlight))
     }
     private var cachedPrepares: Set<TranscriptionModel> = []
 
@@ -207,6 +249,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppDelegate.shared = self
         log("Verbalise launched")
 
+        startEventPump()
         installEditMenu()
         loadSettings()
         menu = StatusMenu(delegate: self)
@@ -320,6 +363,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         inputPreview.stop()
         keyTap?.stop()
         pill?.quit()
+        eventSink.finish()
+        eventPump?.cancel()
         log("Verbalise terminating")
     }
 
@@ -412,8 +457,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func buildStack() {
         pill = OverlayPill(style: settings.overlayStyle, meter: meter)
 
-        let engine = TranscriptionEngine(settings: engineSettings) { phase in
-            Task { @MainActor in AppDelegate.shared?.show(phase: phase) }
+        let engine = TranscriptionEngine(settings: engineSettings) { [eventSink] phase in
+            eventSink.yield(.enginePhase(phase))
         }
 
         let controller = DictationController(
@@ -421,8 +466,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             transcriber: engine,
             inserter: TextInserter(keyboard: SystemKeyboard(), pasteboard: SystemPasteboard()),
             settings: settings,
-            emit: { event in
-                Task { @MainActor in AppDelegate.shared?.handle(event) }
+            emit: { [eventSink] event in
+                eventSink.yield(.dictation(event))
             }
         )
 
