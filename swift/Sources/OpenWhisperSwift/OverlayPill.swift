@@ -63,6 +63,19 @@ final class OverlayModel: ObservableObject {
         }
     }
 
+    /// Sized per symbol, not once for both.
+    ///
+    /// A solid disc carries far more ink than an outline of the same nominal
+    /// size, so `circle.fill` at the size that suits `sparkles` reads as
+    /// shouting next to the waveform. Optical sizing balances weights within a
+    /// symbol; across two symbols this different it still needs a hand.
+    var symbolSize: CGFloat {
+        switch currentState {
+        case "recording": 13.5
+        default: 15
+        }
+    }
+
     var isRecording: Bool { currentState == "recording" }
 
     var elapsedLabel: String {
@@ -176,6 +189,40 @@ struct PillBarsView: View {
     }
 }
 
+// MARK: - AppKit glass
+
+/// `NSGlassEffectView` (macOS 26) wrapped for SwiftUI.
+///
+/// The SwiftUI `.glassEffect()` modifier drew a flat, evenly translucent
+/// capsule here -- the fill without the blur or the edge refraction. The
+/// backdrop sampling that produces both needs the material to sit in the
+/// window's own view hierarchy, and inside an NSHostingView in a borderless
+/// transparent panel it evidently does not get there.
+///
+/// The evidence for going this way is one file down: the pre-26 fallback wraps
+/// `NSVisualEffectView` with `.behindWindow` in exactly this manner, and that
+/// one blurs correctly. So an AppKit view in this hierarchy can sample the
+/// desktop. This is the same trick with the macOS 26 material.
+@available(macOS 26.0, *)
+struct AppKitGlassView: NSViewRepresentable {
+    var style: NSGlassEffectView.Style = .clear
+    /// nil keeps the capsule: half the view's height, applied on layout.
+    var cornerRadius: CGFloat?
+
+    func makeNSView(context: Context) -> NSGlassEffectView {
+        let view = NSGlassEffectView()
+        view.style = style
+        return view
+    }
+
+    func updateNSView(_ view: NSGlassEffectView, context: Context) {
+        view.style = style
+        // A capsule is a corner radius of half the height. Recomputed on every
+        // update because the pill's height is content-driven.
+        view.cornerRadius = cornerRadius ?? (view.bounds.height / 2)
+    }
+}
+
 // MARK: - NSVisualEffectView wrapper (fallback for macOS < 26)
 
 struct VisualEffectView: NSViewRepresentable {
@@ -228,11 +275,10 @@ struct OverlayContentView: View {
             iconWidth + 10 + timerWidth + 10 + PillBarsView.recordingWidth
 
         let pill = HStack(spacing: 10) {
-            // Size is the one knob. An SF Symbol sizes from its font, so this
-            // is the number to change if the glyph wants to be bigger or
-            // smaller; iconWidth below is the slot it sits in, not its size.
+            // Sizes come from the model, per symbol -- see `symbolSize`.
+            // `iconWidth` below is the slot the glyph sits in, not its size.
             Image(systemName: model.symbolName)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: model.symbolSize, weight: .semibold))
                 .foregroundColor(iconColor)
                 .frame(width: iconWidth, alignment: .center)
 
@@ -285,15 +331,15 @@ struct OverlayContentView: View {
                 // continuous glass surface; without it each glass view is
                 // sampled independently and the effect flattens.
                 // `.interactive()` adds the responsive light play.
-                // The material sits behind the content, not over it, so its
-                // strength can be dialled without taking the text and bars
-                // with it. Fading `pill.glassEffect(...)` fades the whole pill
-                // and reads as washed out -- learned twice.
+                // AppKit's glass, not SwiftUI's. See AppKitGlassView for why.
+                //
+                // Behind the content rather than wrapping it, which is what
+                // lets the text and bars stay at full strength regardless of
+                // what the material is doing.
                 pill.background {
-                    GlassEffectContainer {
-                        Color.clear.glassEffect(.regular.interactive(), in: .capsule)
-                    }
-                    .opacity(Self.glassStrength)
+                    AppKitGlassView(style: .clear)
+                        .clipShape(.capsule)
+                        .allowsHitTesting(false)
                 }
             } else {
                 // macOS 14/15 have no Liquid Glass; the closest the older
