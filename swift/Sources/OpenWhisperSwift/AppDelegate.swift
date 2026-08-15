@@ -419,6 +419,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func refuse(with message: String) {
         refusedWhileUnready = true
         menu?.show(alert: message)
+        // The alert lives behind the menu bar icon, so on its own a refusal
+        // is a keypress that visibly does nothing — no pill, no sound —
+        // which is indistinguishable from the app being dead. The flash is
+        // the on-screen half of the answer; the menu has the words.
+        pill?.flash(state: "waiting")
     }
 
     // MARK: - Events
