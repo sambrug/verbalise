@@ -259,7 +259,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         self.engine = engine
         self.controller = controller
-        menu?.show(state: .idle)
+        refreshStatusLine()
     }
 
     /// Rebuilt whenever the device or sample rate changes, since both are fixed
@@ -359,9 +359,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // Load in parallel with the recording rather than after it.
                 // A model already on disk takes a few seconds, which is time
                 // the user spends speaking anyway — so by the time they let go
-                // it is usually ready and the wait disappears entirely.
+                // it is usually ready and the wait disappears entirely. The
+                // status line notices on its own ("Recording… (waking speech
+                // model)") via refreshStatusLine.
                 if await !engine.isLoaded {
-                    menu?.show(status: "Recording… (waking speech model)")
                     Task.detached { try? await engine.ensureLoaded() }
                 }
                 await lifecycle.noteActivity()
@@ -381,7 +382,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch event {
         case .state(let state):
             dictationState = state
-            menu?.show(state: state)
+            refreshStatusLine()
 
         case .pill(let command):
             switch command {
@@ -423,11 +424,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func show(phase: TranscriptionEngine.Phase) {
         enginePhase = phase
         switch phase {
-        case .downloading(let fraction):
-            menu?.show(status: fraction.map { "Downloading model \(Int($0 * 100))%" }
-                ?? "Downloading model…")
-        case .loading:
-            menu?.show(status: "Loading model…")
+        case .downloading, .loading:
+            break
         case .ready:
             // The idle countdown starts from the moment there is something to
             // unload, not from launch.
@@ -435,10 +433,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .idle:
             Task { await lifecycle.noteUnloaded() }
         }
+        refreshStatusLine()
         // The engine downloads too, and the Settings window must show that as
         // one download rather than none -- otherwise a model fetched on the way
         // to a dictation appears in the list as simply missing.
         SettingsWindow.refreshIfOpen()
+    }
+
+    /// The status line's one writer.
+    ///
+    /// The dictation state and the engine phase both wanted this line, and
+    /// with each writing it directly the last writer won — which is how
+    /// Escape during a stuck transcription left the menu saying "Ready" while
+    /// the model was still minutes from loaded (#8). Deriving the line from
+    /// both here means neither can contradict the other: dictation activity
+    /// outranks engine phases, and an idle dictation shows whatever the
+    /// engine is doing.
+    private func refreshStatusLine() {
+        switch dictationState {
+        case .recording:
+            menu?.show(state: .recording)
+            if enginePhase != .ready {
+                menu?.show(status: "Recording… (waking speech model)")
+            }
+        case .transcribing:
+            menu?.show(state: .transcribing)
+        case .idle:
+            switch enginePhase {
+            case .downloading(let fraction):
+                menu?.show(status: fraction.map { "Downloading model \(Int($0 * 100))%" }
+                    ?? "Downloading model…")
+            case .loading:
+                menu?.show(status: "Loading model…")
+            case .ready, .idle:
+                menu?.show(state: .idle)
+            }
+        }
     }
 }
 
@@ -562,7 +592,7 @@ extension AppDelegate: SettingsDelegate {
             // seam that exists purely for this.
             buildStack()
         }
-        menu?.show(state: .idle)
+        refreshStatusLine()
     }
 
     func clearRecentTranscripts() {
