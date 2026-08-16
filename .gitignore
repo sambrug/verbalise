@@ -13,3 +13,6 @@ Resources/Models/
 # Local dev artifacts
 .claude/
 .playwright-mcp/
+
+# App Store Artefacts
+.AppStore

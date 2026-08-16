@@ -1,8 +1,17 @@
 # Working in this repo
 
+## Working style
+
+Sam is a Product Manager by career not a developer. He is semi-technical - 
+he has a strong interest in coding and AI and picks up concepts fast. Given 
+this, lean towards explaining at a more abstract level unless needed or 
+specifically asked. At this stage, we are generally 'vibe coding' but he
+is comfortable to go in and make manual edits if needed, and navigate GitHub
+or other required systems.
+
 ## Commit hygiene
 
-This is a personal, unreviewed project, so the usual "keep PRs small for
+This is a personal project so the usual "keep PRs small for
 reviewers" reasoning doesn't really apply here — but atomic *commits* still
 do, because `git bisect` and `git revert` care about commit boundaries, not
 PR boundaries.
