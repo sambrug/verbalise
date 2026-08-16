@@ -52,6 +52,24 @@ targets:
           # which ships the entitlements file inside the app.
           - "Info.plist"
           - "Verbalise.entitlements"
+          # Added below as a folder reference instead. Left here it is walked
+          # as a group and its files land flattened in Contents/Resources,
+          # where the bundled-model lookup cannot find them.
+          - "Models"
+      # The staged speech model, copied whole. `type: folder` is load-bearing:
+      # TranscriptionEngine.existingFolder looks the model up with
+      # Bundle.main.url(forResource:subdirectory: "Models"), which needs
+      # Contents/Resources/Models/<variant>/ to survive intact. A group
+      # reference flattens that away and a fresh install silently falls back to
+      # downloading the model it already shipped with.
+      #
+      # Optional because Resources/Models is gitignored and absent in a normal
+      # dev checkout -- scripts/fetch-default-model.sh stages it, and only a
+      # release archive needs it. `xcodegen` must not fail without it.
+      - path: Resources/Models
+        type: folder
+        buildPhase: resources
+        optional: true
       # Icon Composer bundle. Xcode's asset pipeline compiles it, the same
       # way scripts/build-app.sh does with actool directly.
       - path: Resources/AppIcon.icon
