@@ -112,6 +112,59 @@ targets:
         CODE_SIGN_STYLE: Manual
         DEVELOPMENT_TEAM: ""
 
+  # The App Store variant. Same shared package, same product name on disk;
+  # what changes is compiled in by the APPSTORE flag: the registered-hotkey
+  # trigger instead of the event tap, the insertion-mode setting surfaced in
+  # Settings, and a permissions pane with no Input Monitoring row.
+  # KeyTap.swift is excluded outright so the reviewed binary does not even
+  # contain the event-tap code it can never legally run.
+  VerbaliseMAS:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/Verbalise
+        excludes:
+          - "KeyTap.swift"
+      - path: Resources
+        buildPhase: resources
+        excludes:
+          - "Info.plist"
+          - "Info-MAS.plist"
+          - "Verbalise.entitlements"
+          - "Verbalise-MAS.entitlements"
+          - "Models"
+      - path: Resources/Models
+        type: folder
+        buildPhase: resources
+        optional: true
+      - path: Resources/AppIcon.icon
+    dependencies:
+      - package: VerbalisePackage
+        product: VerbaliseCore
+      - package: VerbalisePackage
+        product: VerbaliseSpeech
+    settings:
+      base:
+        INFOPLIST_FILE: Resources/Info-MAS.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Verbalise-MAS.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        PRODUCT_BUNDLE_IDENTIFIER: com.sambruggen.verbalise
+        PRODUCT_NAME: Verbalise
+        MARKETING_VERSION: "1.0.1"
+        CURRENT_PROJECT_VERSION: "3"
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) APPSTORE"
+        ENABLE_APP_SANDBOX: YES
+        ENABLE_HARDENED_RUNTIME: NO
+        # Store signing is per-submission: archive in Xcode's Organizer with
+        # automatic signing, which needs the real team. The dev identity is
+        # only here so `xcodebuild build` works for a local smoke test.
+        CODE_SIGN_IDENTITY: "Verbalise Dev"
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: ""
+
 # No test target here on purpose. The package's own tests are the suite, they
 # run under `swift test`, and Xcode surfaces them from the package dependency --
 # a second test target would be a copy that can rot.

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The App Store variant's entitlements. Identical to the direct
+	     build's on purpose -- sandbox, microphone, model downloads -- and
+	     kept as a separate file so neither build can drift the other's.
+	     There is deliberately nothing else here: the store build's trigger
+	     is a registered hotkey (no entitlement exists or is needed), and
+	     insertion is either the runtime PostEvent grant or the clipboard,
+	     neither of which is entitlement-gated. A submission with exception
+	     entitlements invites exactly the scrutiny this build removes. -->
+
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+
+	<!-- Speech model downloads. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+</dict>
+</plist>

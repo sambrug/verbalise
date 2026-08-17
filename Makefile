@@ -1,6 +1,6 @@
 # Verbalise — convenience build targets.
 
-.PHONY: help test app run install xcodeproj signing-cert
+.PHONY: help test app run install xcodeproj signing-cert mas-build mas-archive
 
 help:
 	@echo "Verbalise — make targets:"
@@ -11,6 +11,8 @@ help:
 	@echo "  make install      Copy it to /Applications as the everyday app"
 	@echo "  make xcodeproj    Generate Verbalise.xcodeproj (needs xcodegen)"
 	@echo "  make signing-cert Create the per-machine code-signing certificate (once)"
+	@echo "  make mas-build    Compile-check the App Store variant (fast, SwiftPM)"
+	@echo "  make mas-archive  Xcode archive of the App Store variant for submission"
 	@echo ""
 
 test:
@@ -44,3 +46,21 @@ xcodeproj:
 	}
 	xcodegen
 	@echo "Generated Verbalise.xcodeproj (gitignored — regenerate, don't edit)."
+
+# The store variant compiled the fast way: SwiftPM with the APPSTORE flag.
+# Catches variant-only compile breaks without waiting for an Xcode build.
+# It cannot produce a submittable app — that is mas-archive's job.
+mas-build:
+	swift build -Xswiftc -DAPPSTORE
+
+# The submission path: an Xcode archive of the VerbaliseMAS target. Open the
+# result in Xcode's Organizer (or drag it onto Xcode) to sign with the real
+# distribution identity and upload to App Store Connect. Bump the version keys
+# in Resources/Info-MAS.plist and project.yml before archiving.
+mas-archive: xcodeproj
+	xcodebuild -project Verbalise.xcodeproj -scheme VerbaliseMAS \
+		-configuration Release \
+		-archivePath build/Verbalise-MAS.xcarchive archive
+	@echo ""
+	@echo "Archive at build/Verbalise-MAS.xcarchive"
+	@echo "Next: open it in Xcode's Organizer, then Distribute App > App Store Connect."
