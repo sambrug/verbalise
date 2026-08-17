@@ -558,7 +558,7 @@ private struct PermissionsPane: View {
                 )
                 PermissionRowView(
                     title: "Accessibility",
-                    detail: "Types your words into whatever app you're using.",
+                    detail: "So your dictated text appears in the app you're typing in.",
                     isGranted: Permissions.hasPostEvent,
                     pane: .accessibility,
                     request: { done in
