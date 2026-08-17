@@ -1,5 +1,8 @@
 import VerbaliseCore
 import SwiftUI
+#if APPSTORE
+import AppKit
+#endif
 
 // MARK: - Root
 
@@ -183,6 +186,18 @@ private struct DictationPane: View {
 
     var body: some View {
         Form {
+            #if APPSTORE
+            Section {
+                HotKeyRecorderRow(model: model)
+            } header: {
+                Text("Dictation Shortcut")
+            } footer: {
+                Text("Hold while you speak, then release. Press Escape to "
+                     + "stop without inserting anything. The shortcut is "
+                     + "reserved for Verbalise everywhere while it's running.")
+                .settingsFootnote()
+            }
+            #else
             Section {
                 Picker("Hold to dictate", selection: Binding(
                     get: { model.settings.triggerKey },
@@ -199,6 +214,7 @@ private struct DictationPane: View {
                      + "Press Escape to stop without inserting anything.")
                 .settingsFootnote()
             }
+            #endif
 
             Section {
                 Picker("Microphone", selection: deviceSelection) {
@@ -271,6 +287,83 @@ private struct DictationPane: View {
             + "system default until it is."
     }
 }
+
+#if APPSTORE
+/// Captures the next keystroke as the dictation shortcut.
+///
+/// A recorder rather than a picker, because the valid space is the whole
+/// keyboard and the interesting question is "does this clash with an app I
+/// use", which only the user can answer. The combo rules live in
+/// `HotKeyCombo`: at least one modifier, or a bare function key.
+private struct HotKeyRecorderRow: View {
+    @ObservedObject var model: SettingsModel
+
+    @State private var isRecording = false
+    @State private var monitor: Any?
+    @State private var hint: String?
+
+    var body: some View {
+        LabeledContent("Shortcut") {
+            Button {
+                isRecording ? stopRecording() : startRecording()
+            } label: {
+                Text(isRecording ? "Type a shortcut…" : currentDisplay)
+                    .frame(minWidth: 130)
+            }
+        }
+        .onDisappear { stopRecording() }
+
+        if let hint {
+            Text(hint).settingsFootnote()
+        }
+    }
+
+    private var currentDisplay: String {
+        model.settings.hotKeyCombo?.displayName ?? model.settings.hotKey
+    }
+
+    private func startRecording() {
+        isRecording = true
+        hint = nil
+        // Local monitor: sees only this app's own events, which while the
+        // Settings window is key is exactly the keystroke being recorded.
+        // Returning nil swallows it so the shortcut being typed doesn't also
+        // land in some focused control.
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            MainActor.assumeIsolated { handle(event) }
+            return nil
+        }
+    }
+
+    private func stopRecording() {
+        isRecording = false
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+
+    private func handle(_ event: NSEvent) {
+        // Escape backs out of recording; it can't be a shortcut anyway --
+        // it's the cancel key during a dictation.
+        guard event.keyCode != 53 else {
+            stopRecording()
+            return
+        }
+        var modifiers: HotKeyCombo.Modifiers = []
+        if event.modifierFlags.contains(.command) { modifiers.insert(.command) }
+        if event.modifierFlags.contains(.option) { modifiers.insert(.option) }
+        if event.modifierFlags.contains(.control) { modifiers.insert(.control) }
+        if event.modifierFlags.contains(.shift) { modifiers.insert(.shift) }
+
+        guard let combo = HotKeyCombo(keyCode: event.keyCode, modifiers: modifiers) else {
+            hint = "Add at least one modifier (⌘ ⌥ ⌃ ⇧), or use a bare "
+                + "function key. Plain letters would fire while typing."
+            return
+        }
+        model.change { $0.hotKey = combo.configValue }
+        stopRecording()
+    }
+}
+#endif
 
 // MARK: - Speech model
 

@@ -58,7 +58,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private var menu: StatusMenu?
+    #if APPSTORE
+    /// The store build's trigger: a registered system hotkey. The direct
+    /// build's event tap needs Input Monitoring, which App Review refuses
+    /// (2.4.5(v)); HotKey.swift is the sanctioned replacement.
+    private var hotKey: HotKey?
+    #else
     private var keyTap: KeyTap?
+    #endif
     private var pill: OverlayPill?
 
     private var settings = Settings()
@@ -276,10 +283,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         loadSettings()
         menu = StatusMenu(delegate: self)
         buildStack()
-        startKeyTap()
+        startTrigger()
         loadStats()
         observePermissionGrants()
 
+        #if APPSTORE
+        // The store build's trigger is a registered hotkey: no Input
+        // Monitoring exists to ask for, so no launch prompt either.
+        let prompting = false
+        #else
         // Ask for Input Monitoring once, on the first launch that could still
         // be answered.
         //
@@ -296,6 +308,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Permissions.recordPrompted(for: .inputMonitoring)
             Permissions.requestInputMonitoring()
         }
+        #endif
 
         // Before anything else the user might try. Without a granted trigger
         // key the app is silently inert, which is exactly the confusion the
@@ -383,7 +396,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         idleTimer?.invalidate()
         inputPreview.stop()
+        #if APPSTORE
+        hotKey?.stop()
+        #else
         keyTap?.stop()
+        #endif
         pill?.quit()
         eventSink.finish()
         eventPump?.cancel()
@@ -548,7 +565,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func startKeyTap() {
+    private func startTrigger() {
+        #if APPSTORE
+        hotKey?.stop()
+        hotKey = nil
+
+        guard let combo = settings.hotKeyCombo else {
+            log("config: hotkey '\(settings.hotKey)' is invalid, trigger not started")
+            menu?.show(alert: "'\(settings.hotKey)' isn't a shortcut Verbalise recognises.")
+            return
+        }
+
+        let trigger = HotKey(
+            combo: combo,
+            onChange: { [weak self] held in self?.triggerChanged(held: held) },
+            onEscape: { Task { await AppDelegate.shared?.controller?.handleEscape() } }
+        )
+        hotKey = trigger.start() ? trigger : nil
+        if hotKey == nil {
+            // Registration is refused when another app owns the same combo as
+            // its own hotkey. Unlike a permission problem, the fix is a
+            // different shortcut, so say that.
+            menu?.show(alert: "Another app is using \(combo.displayName), so the "
+                + "dictation shortcut won't work. Pick a different one in Settings.")
+        }
+        #else
         // Replacing an existing tap, not adding to it. An event tap installed
         // before Input Monitoring was granted stays permanently deaf -- it
         // installs happily and simply never delivers -- so the tap has to be
@@ -574,6 +615,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if keyTap == nil {
             menu?.show(alert: "Input Monitoring isn't granted, so the trigger key won't work.")
         }
+        #endif
     }
 
     private func triggerChanged(held: Bool) {
@@ -884,8 +926,12 @@ extension AppDelegate: SettingsDelegate {
     }
 
     func reinstallKeyTap() {
-        startKeyTap()
+        startTrigger()
+        #if APPSTORE
+        if hotKey != nil { menu?.clearAlert() }
+        #else
         if keyTap != nil { menu?.clearAlert() }
+        #endif
     }
 
     /// Applies a settings change live, rebuilding only what actually depends on
@@ -902,9 +948,15 @@ extension AppDelegate: SettingsDelegate {
         settings = newSettings
         try? store?.save(newSettings)
 
+        #if APPSTORE
+        if old.hotKey != newSettings.hotKey, let combo = newSettings.hotKeyCombo {
+            hotKey?.update(combo: combo)
+        }
+        #else
         if old.triggerKey != newSettings.triggerKey, let combo = newSettings.triggerCombo {
             keyTap?.update(combo: combo)
         }
+        #endif
         if old.overlayStyle != newSettings.overlayStyle {
             pill?.apply(style: newSettings.overlayStyle)
         }
