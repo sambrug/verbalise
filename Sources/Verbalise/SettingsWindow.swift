@@ -91,7 +91,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
     /// the pane that also explains the rest of the app, so there is one place to
     /// send someone rather than two that overlap.
     static func showIfPermissionsMissing(delegate: any SettingsDelegate) {
-        guard PermissionsState.needsSetup else { return }
+        guard PermissionsState.needsSetup(for: delegate.currentSettings) else { return }
         show(pane: .permissions, delegate: delegate)
     }
 
@@ -211,12 +211,20 @@ enum SettingsPane: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
-/// The three TCC grants, read together.
+/// The TCC grants the running variant actually needs, read together.
 enum PermissionsState {
-    static var needsSetup: Bool {
-        !Permissions.hasInputMonitoring
+    static func needsSetup(for settings: VerbaliseCore.Settings) -> Bool {
+        #if APPSTORE
+        // The hotkey trigger needs nothing, and the Accessibility-pane grant
+        // is only in play while auto insertion is selected. In clipboard mode
+        // the app is microphone-only.
+        if !Permissions.hasMicrophone { return true }
+        return settings.insertionMode == .auto && !Permissions.hasPostEvent
+        #else
+        return !Permissions.hasInputMonitoring
             || !Permissions.hasPostEvent
             || !Permissions.hasMicrophone
+        #endif
     }
 }
 
@@ -294,7 +302,7 @@ final class SettingsModel: ObservableObject {
         // Reading the counter is what ties this to the poll: SwiftUI re-runs the
         // sidebar body when it changes, and the answer below is recomputed then.
         _ = permissionsRevision
-        return PermissionsState.needsSetup
+        return PermissionsState.needsSetup(for: settings)
     }
 
     /// The single write path. Mirrors what the menu did, so both surfaces go

@@ -647,7 +647,7 @@ private struct PermissionsPane: View {
             Section {
                 PermissionRowView(
                     title: "Microphone",
-                    detail: "Records your voice while you hold the trigger key.",
+                    detail: micDetail,
                     isGranted: Permissions.hasMicrophone,
                     pane: .microphone,
                     request: { done in
@@ -658,6 +658,25 @@ private struct PermissionsPane: View {
                     },
                     model: model
                 )
+                #if APPSTORE
+                // No Input Monitoring row: the hotkey trigger doesn't watch
+                // the keyboard, so there is nothing to grant. Accessibility
+                // is only in play while auto insertion is selected --
+                // clipboard mode leaves the app microphone-only.
+                if model.settings.insertionMode == .auto {
+                    PermissionRowView(
+                        title: "Accessibility",
+                        detail: "So your dictated text appears in the app you're typing in.",
+                        isGranted: Permissions.hasPostEvent,
+                        pane: .accessibility,
+                        request: { done in
+                            Permissions.requestPostEvent()
+                            done()
+                        },
+                        model: model
+                    )
+                }
+                #else
                 PermissionRowView(
                     title: "Input Monitoring",
                     detail: "Lets Verbalise spot your trigger key.",
@@ -680,6 +699,7 @@ private struct PermissionsPane: View {
                     },
                     model: model
                 )
+                #endif
             } header: {
                 // Reading the revision here is what ties this pane to the
                 // poll: it re-renders when the counter moves, which re-reads
@@ -723,8 +743,20 @@ private struct PermissionsPane: View {
     /// changed. "Hold your trigger key" is useless to someone who has never
     /// heard the phrase and does not yet know which key it means.
     private var readyMessage: String {
+        #if APPSTORE
+        let key = model.settings.hotKeyCombo?.displayName ?? "your shortcut"
+        #else
         let key = model.settings.triggerCombo?.displayName ?? "your trigger key"
+        #endif
         return "Verbalise is ready. Hold \(key) to dictate."
+    }
+
+    private var micDetail: String {
+        #if APPSTORE
+        "Records your voice while you hold your dictation shortcut."
+        #else
+        "Records your voice while you hold the trigger key."
+        #endif
     }
 }
 
