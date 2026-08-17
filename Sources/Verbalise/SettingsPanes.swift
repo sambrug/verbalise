@@ -628,8 +628,10 @@ private struct PermissionRowView: View {
     /// only ever prompts looks broken -- it becomes "Open Settings" instead.
     ///
     /// Read from the recorded answer rather than held as `@State`: view state
-    /// resets on every launch, which put the button back to "Grant" long after
-    /// asking could show anything, so the first click did nothing at all. The
+    /// resets on every launch, which put the button back to its ask state long
+    /// after asking could show anything, so the first click did nothing at all.
+    /// "Continue" rather than "Grant" -- App Review 5.1.1(iv) requires neutral
+    /// wording on any button that leads into a system permission prompt. The
     /// launch-time request records itself the same way, so a prompt spent
     /// before this pane was ever opened is counted too.
     private var hasPrompted: Bool { Permissions.hasPrompted(for: pane) }
@@ -652,7 +654,7 @@ private struct PermissionRowView: View {
             Spacer(minLength: 8)
 
             if !isGranted {
-                Button(hasPrompted ? "Open System Settings" : "Grant") {
+                Button(hasPrompted ? "Open System Settings" : "Continue") {
                     if hasPrompted {
                         if let url = Permissions.settingsURL(for: pane) {
                             NSWorkspace.shared.open(url)
