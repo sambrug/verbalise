@@ -64,7 +64,8 @@ struct DictationControllerTests {
 
     static func makeHarness(
         transcriber: any Transcriber = FixedTranscriber(),
-        opener: HealthyOpener = HealthyOpener()
+        opener: HealthyOpener = HealthyOpener(),
+        configure: (inout Settings) -> Void = { _ in }
     ) -> Harness {
         let events = EventRecorder()
         let keyboard = FakeKeyboard()
@@ -75,6 +76,7 @@ struct DictationControllerTests {
         var settings = Settings()
         settings.advanced.clipboardRestoreDelay = 0
         settings.releaseDelay = 0
+        configure(&settings)
 
         let controller = DictationController(
             session: session,
@@ -107,6 +109,25 @@ struct DictationControllerTests {
         // recording -> transcribing -> hidden
         #expect(h.pillSequenceIsNormal)
         #expect(await h.session.isSubsystemSuspect == false, "no false wedge flag")
+    }
+
+    @Test("clipboard mode: transcript copied, pill flashes the paste cue, no key events")
+    func clipboardModeEndToEnd() async {
+        let h = Self.makeHarness(configure: { $0.insertionMode = .clipboard })
+        let stream = HealthyStream()
+
+        await h.controller._prepareForTest(stream: stream, audio: Self.audio, secondsAgo: 5)
+        await h.controller.stopAndTranscribe()
+
+        // The words reached the clipboard and nothing touched the keyboard --
+        // this is the whole contract of the App Store fallback mode.
+        #expect(h.clipboard.value == "hello world")
+        #expect(h.keyboard.typed.isEmpty)
+        #expect(h.keyboard.pasteCount == 0)
+        // The pill's exit is the paste cue, not a plain hide.
+        #expect(h.events.pillCommands.last == .flash("copied"))
+        #expect(h.events.lastTexts == ["hello world"])
+        #expect(await h.controller.state == .idle)
     }
 
     @Test("a dictation under min_duration is ignored")

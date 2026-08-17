@@ -61,6 +61,7 @@ final class OverlayModel: ObservableObject {
         switch currentState {
         case "recording": "record.circle.fill"
         case "transcribing", "cleaning": "sparkles.2"
+        case "copied": "doc.on.clipboard"
         default: "record.circle.fill"
         }
     }
@@ -79,6 +80,7 @@ final class OverlayModel: ObservableObject {
     }
 
     var isRecording: Bool { currentState == "recording" }
+    var isCopied: Bool { currentState == "copied" }
 
     var elapsedLabel: String {
         let s = elapsedSeconds
@@ -336,8 +338,17 @@ struct OverlayContentView: View {
                 .opacity(isRecording ? 1 : 0)
                 .clipped()
 
-            PillBarsView(model: model)
-                .frame(width: visualWidth, alignment: .leading)
+            if model.isCopied {
+                // Clipboard mode's exit line. Takes the bars' slot at the
+                // bars' width, so the pill never changes size.
+                Text("Press ⌘V to paste")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(iconColor.opacity(0.85))
+                    .frame(width: visualWidth, alignment: .leading)
+            } else {
+                PillBarsView(model: model)
+                    .frame(width: visualWidth, alignment: .leading)
+            }
         }
         .frame(width: pinnedContentWidth, alignment: .leading)
         .padding(.horizontal, 14)
@@ -501,8 +512,13 @@ final class OverlayPill {
 
     // MARK: Commands
 
+    /// Invalidates any pending flash-hide: a new dictation's pill must not be
+    /// taken down by the tail end of the previous one's flash.
+    private var flashGeneration = 0
+
     func show(state: String = "recording") {
         guard style != .off else { return }
+        flashGeneration += 1
         makePanelIfNeeded()
         guard let panel, let hostingView else { return }
 
@@ -571,6 +587,20 @@ final class OverlayPill {
         }
         // Don't reposition here. The pill width is constant across states, and
         // resizing the panel mid-animation causes a perceptible vertical jump.
+    }
+
+    /// Shows `state` briefly, then hides. Clipboard mode's "Press ⌘V" cue:
+    /// long enough to read in the corner of an eye, short enough that the
+    /// pill never feels stuck.
+    func flash(state: String) {
+        guard style != .off else { return }
+        set(state: state)
+        flashGeneration += 1
+        let generation = flashGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+            guard let self, self.flashGeneration == generation else { return }
+            self.hide()
+        }
     }
 
     func hide() {

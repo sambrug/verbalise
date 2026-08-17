@@ -698,6 +698,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .show(let state): pill?.show(state: state)
             case .setState(let state): pill?.set(state: state)
             case .hide: pill?.hide()
+            case .flash(let state): pill?.flash(state: state)
             }
 
         case .lastText(let text):

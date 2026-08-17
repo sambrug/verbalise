@@ -197,6 +197,26 @@ private struct DictationPane: View {
                      + "reserved for Verbalise everywhere while it's running.")
                 .settingsFootnote()
             }
+
+            Section {
+                Picker("Insert text", selection: Binding(
+                    get: { model.settings.insertionMode },
+                    set: { new in model.change { $0.insertionMode = new } }
+                )) {
+                    Text("Automatically").tag(InsertionMode.auto)
+                    Text("Via the clipboard").tag(InsertionMode.clipboard)
+                }
+                .pickerStyle(.radioGroup)
+            } header: {
+                Text("Inserting Text")
+            } footer: {
+                Text(model.settings.insertionMode == .clipboard
+                     ? "Your words are copied when you finish speaking — the "
+                       + "pill shows “Press ⌘V to paste”. Needs no permissions."
+                     : "Your words appear where your cursor is, using the "
+                       + "Accessibility permission.")
+                .settingsFootnote()
+            }
             #else
             Section {
                 Picker("Hold to dictate", selection: Binding(

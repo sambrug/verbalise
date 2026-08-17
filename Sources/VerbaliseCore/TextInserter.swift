@@ -17,6 +17,9 @@ public actor TextInserter {
         public enum Path: Equatable, Sendable {
             case typed
             case pasted
+            /// Clipboard mode: the transcript is on the clipboard and the
+            /// user pastes it themselves. No key event was synthesised.
+            case copied
             case notInserted
         }
         public var path: Path
@@ -47,6 +50,22 @@ public actor TextInserter {
     @discardableResult
     public func insert(_ text: String, settings: Settings) async -> Outcome {
         guard !text.isEmpty else { return Outcome(path: .notInserted, warning: nil) }
+
+        // Clipboard mode never touches the keyboard: the transcript is
+        // copied, verified, and left there for the user's own Cmd+V. No
+        // restore either -- the clipboard *is* the delivery vehicle, and
+        // snatching the text back on a timer would be a race against the
+        // user's hands.
+        if settings.insertionMode == .clipboard {
+            guard await writeVerified(text) else {
+                log("clipboard: write refused after \(writeAttempts) attempts")
+                return Outcome(
+                    path: .notInserted,
+                    warning: "Clipboard unavailable — text not copied. It's in Recent Transcripts."
+                )
+            }
+            return Outcome(path: .copied, warning: nil)
+        }
 
         if settings.advanced.fastTypingEnabled,
            text.count <= settings.advanced.fastTypingMaxChars {

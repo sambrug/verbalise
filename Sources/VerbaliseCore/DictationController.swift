@@ -10,6 +10,10 @@ public enum PillCommand: Sendable, Equatable {
     case show(String)
     case setState(String)
     case hide
+    /// Show `state` briefly, then hide -- the pill owns the timing. Used for
+    /// clipboard mode's "Press ⌘V" moment: the cue matters because pasting
+    /// before transcription lands would paste the user's old clipboard.
+    case flash(String)
 }
 
 /// Replaces the Python daemon's stdout JSON event stream (legacy-python/daemon.py:218,
@@ -220,6 +224,10 @@ public actor DictationController {
             return
         }
 
+        // How the pill leaves the stage. Plain hide, except in clipboard
+        // mode where a successful copy flashes the "Press ⌘V" state first.
+        var pillDismissal: PillCommand = .hide
+
         do {
             let raw = try await finishTranscription(audio)
 
@@ -247,6 +255,12 @@ public actor DictationController {
                 if let warning = outcome.warning {
                     emit(.warning(warning))
                 }
+                if outcome.path == .copied {
+                    // The text is waiting on the clipboard; the pill lingers
+                    // long enough to say so instead of vanishing as if the
+                    // words had been delivered.
+                    pillDismissal = .flash("copied")
+                }
                 emit(.lastText(corrected))
                 emit(.statsChanged)
             }
@@ -262,7 +276,7 @@ public actor DictationController {
             emit(.error(message ?? "Transcription failed."))
         }
 
-        finish(gen: gen)
+        finish(gen: gen, pill: pillDismissal)
     }
 
     /// Produces the transcript, using whatever the streamer already did.
@@ -314,13 +328,13 @@ public actor DictationController {
         return trimmed
     }
 
-    private func finish(gen: Int) {
+    private func finish(gen: Int, pill dismissal: PillCommand = .hide) {
         guard generation == gen else { return }
         state = .idle
         stopStartedAt = nil
         streamer = nil
         streamerLastCut = 0
-        emit(.pill(.hide))
+        emit(.pill(dismissal))
         emit(.state(.idle))
     }
 

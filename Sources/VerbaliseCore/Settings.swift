@@ -112,6 +112,19 @@ public enum TranscriptionModel: String, CaseIterable, Codable, Sendable {
 ///
 /// Old configs naming `translucent` or `solid` still load, both meaning on —
 /// neither should leave a user with no pill and no explanation.
+/// How a finished transcript reaches the focused app.
+///
+/// `auto` is the product: the text is typed (or pasted) for you, which needs
+/// the PostEvent grant macOS files under Accessibility. `clipboard` exists
+/// for the App Store: the transcript is copied and the user presses Cmd+V --
+/// one extra keystroke, but nothing for App Review to object to. It is the
+/// prepared fallback if the store build's defence of `auto` fails (2.4.5),
+/// and honoured in every build so a config file carries it across variants.
+public enum InsertionMode: String, CaseIterable, Codable, Sendable {
+    case auto
+    case clipboard
+}
+
 public enum OverlayStyle: String, CaseIterable, Codable, Sendable {
     case on
     case off
@@ -193,6 +206,7 @@ public struct Settings: Codable, Equatable, Sendable {
     public var releaseDelay: Double = 0.05
     public var sampleRate: Int = 16000
     public var soundEnabled: Bool = false
+    public var insertionMode: InsertionMode = .auto
     public var overlayStyle: OverlayStyle = .on
     public var vocabulary: [String] = []
     public var phoneticCorrections: [String: String] = [:]
@@ -211,6 +225,7 @@ public struct Settings: Codable, Equatable, Sendable {
         case releaseDelay = "release_delay"
         case sampleRate = "sample_rate"
         case soundEnabled = "sound_enabled"
+        case insertionMode = "insertion_mode"
         case overlayStyle = "overlay_style"
         case vocabulary
         case phoneticCorrections = "phonetic_corrections"
@@ -230,6 +245,7 @@ public struct Settings: Codable, Equatable, Sendable {
         releaseDelay = try c.decodeIfPresent(Double.self, forKey: .releaseDelay) ?? releaseDelay
         sampleRate = try c.decodeIfPresent(Int.self, forKey: .sampleRate) ?? sampleRate
         soundEnabled = try c.decodeIfPresent(Bool.self, forKey: .soundEnabled) ?? soundEnabled
+        insertionMode = try c.decodeIfPresent(InsertionMode.self, forKey: .insertionMode) ?? insertionMode
         overlayStyle = try c.decodeIfPresent(OverlayStyle.self, forKey: .overlayStyle) ?? overlayStyle
         vocabulary = try c.decodeIfPresent([String].self, forKey: .vocabulary) ?? vocabulary
         phoneticCorrections = try c.decodeIfPresent([String: String].self, forKey: .phoneticCorrections) ?? phoneticCorrections

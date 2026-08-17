@@ -67,6 +67,45 @@ struct TextInserterTests {
         #expect(clipboard.writes.isEmpty)
     }
 
+    // MARK: - Clipboard mode (the App Store fallback)
+
+    @Test("clipboard mode: copied and verified, keyboard never touched")
+    func clipboardModeCopies() async {
+        let keyboard = FakeKeyboard()
+        let clipboard = FakeClipboard()
+        let inserter = TextInserter(keyboard: keyboard, pasteboard: clipboard)
+
+        var settings = Self.settings(restoreDelay: 5)
+        settings.insertionMode = .clipboard
+        // Short text, which auto mode would have typed: mode wins over length.
+        let outcome = await inserter.insert("short one", settings: settings)
+
+        #expect(outcome.path == .copied)
+        #expect(outcome.warning == nil)
+        #expect(keyboard.typed.isEmpty)
+        #expect(keyboard.pasteCount == 0)
+        // The text stays put for the user's own Cmd+V -- no restore is
+        // scheduled, whatever the restore delay says.
+        #expect(clipboard.value == "short one")
+    }
+
+    @Test("clipboard mode: refused write warns instead of pretending")
+    func clipboardModeRefusedWrite() async {
+        let keyboard = FakeKeyboard()
+        let clipboard = FakeClipboard(refuseWrites: true)
+        let inserter = TextInserter(keyboard: keyboard, pasteboard: clipboard)
+
+        var settings = Self.settings()
+        settings.insertionMode = .clipboard
+        let outcome = await inserter.insert(Self.long, settings: settings)
+
+        #expect(outcome.path == .notInserted)
+        #expect(outcome.warning?.contains("not copied") == true)
+        #expect(keyboard.typed.isEmpty)
+        #expect(keyboard.pasteCount == 0)
+        #expect(clipboard.value == "PREVIOUS CLIPBOARD")
+    }
+
     // MARK: - Refused write
 
     @Test("clipboard refused: no paste sent, user's clipboard untouched")
