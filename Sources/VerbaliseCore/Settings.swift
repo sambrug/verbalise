@@ -182,6 +182,11 @@ public struct Settings: Codable, Equatable, Sendable {
     // types into whatever has focus. The pair costs nothing to hold and is
     // never pressed by accident.
     public var triggerKey: String = "alt_r+shift_r"
+    // The App Store build's trigger: a registered system hotkey rather than a
+    // held modifier pair, because the store build may not watch the keyboard
+    // (see HotKeyCombo). Present in every build so a config file moves between
+    // variants without losing the setting; the direct build simply ignores it.
+    public var hotKey: String = HotKeyCombo.defaultCombo.configValue
     public var language: String = "en"
     public var minDuration: Double = 0.5
     public var maxDuration: Double = 300
@@ -199,6 +204,7 @@ public struct Settings: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case transcriptionModel = "transcription_model"
         case triggerKey = "trigger_key"
+        case hotKey = "hotkey"
         case language
         case minDuration = "min_duration"
         case maxDuration = "max_duration"
@@ -217,6 +223,7 @@ public struct Settings: Codable, Equatable, Sendable {
         self.init()
         transcriptionModel = try c.decodeIfPresent(TranscriptionModel.self, forKey: .transcriptionModel) ?? transcriptionModel
         triggerKey = try c.decodeIfPresent(String.self, forKey: .triggerKey) ?? triggerKey
+        hotKey = try c.decodeIfPresent(String.self, forKey: .hotKey) ?? hotKey
         language = try c.decodeIfPresent(String.self, forKey: .language) ?? language
         minDuration = try c.decodeIfPresent(Double.self, forKey: .minDuration) ?? minDuration
         maxDuration = try c.decodeIfPresent(Double.self, forKey: .maxDuration) ?? maxDuration
@@ -233,6 +240,11 @@ public struct Settings: Codable, Equatable, Sendable {
     /// Parsed trigger, or nil when `triggerKey` is malformed.
     public var triggerCombo: TriggerCombo? {
         TriggerCombo(configValue: triggerKey)
+    }
+
+    /// Parsed store-build trigger, or nil when `hotkey` is malformed.
+    public var hotKeyCombo: HotKeyCombo? {
+        HotKeyCombo(configValue: hotKey)
     }
 
     /// Phonetic corrections as an ordered list for `TextPipeline`.
@@ -287,6 +299,13 @@ extension Settings {
             let valid = TriggerKey.allCases.map(\.rawValue).joined(separator: ", ")
             result.errors.append(
                 "trigger_key '\(triggerKey)' contains invalid key(s): \(invalid.joined(separator: ", ")). Valid keys: \(valid)"
+            )
+        }
+
+        if hotKeyCombo == nil {
+            result.errors.append(
+                "hotkey '\(hotKey)' isn't a valid shortcut. Use modifiers+key like "
+                + "'alt+d' or 'cmd+shift+9', or a bare function key like 'f6'."
             )
         }
 
