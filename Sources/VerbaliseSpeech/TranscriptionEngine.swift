@@ -267,7 +267,12 @@ public actor TranscriptionEngine: Transcriber {
             modelFolder: folder.path,
             verbose: false,
             logLevel: .error,
-            prewarm: true,
+            // ModelPreparer has already run the one-off, low-memory prewarm.
+            // Repeating it here makes WhisperKit load every component twice.
+            // Skip that duplicate pass for the small Fast tier; retain it for
+            // the larger tiers in case macOS evicted its Core ML cache, where
+            // loading all components during recompilation risks an 8 GB Mac.
+            prewarm: model != .fast,
             load: true,
             download: false
         )
