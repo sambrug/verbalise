@@ -22,6 +22,9 @@ import SwiftUI
 //     Contents/Resources. This executable lives in Contents/MacOS, so the
 //     sibling trick would look in the wrong directory; it asks the bundle
 //     instead, and falls back to the repo layout for `swift run`.
+//
+// One fix has gone in since, which changes nothing on screen: the waveform's
+// animation clock stops while the panel is ordered out. See `onScreen`.
 
 // MARK: - Model
 
@@ -39,6 +42,19 @@ final class OverlayModel: ObservableObject {
         Array(repeating: CGFloat(LevelScaler.minimumHeight), count: barCount)
     @Published var visible = false
     @Published var elapsedSeconds: Int = 0
+
+    /// Whether the panel is actually on screen, which is what the waveform's
+    /// animation clock runs on.
+    ///
+    /// Ordering a panel out does not stop the SwiftUI inside it: the hidden
+    /// panel is kept for the next dictation, and its `TimelineView` went on
+    /// redrawing the bars 20 times a second with nobody to see them -- 5-10%
+    /// CPU, all day, from the first dictation until quit.
+    ///
+    /// Not `visible`, which goes false a quarter-second earlier to start the
+    /// fade. Pausing on that would freeze the bars mid-fade; this follows the
+    /// panel itself, so the pill looks exactly as it did.
+    @Published var onScreen = false
 
     private var timer: Timer?
     private var recordStart: Date?
@@ -170,7 +186,7 @@ struct PillBarsView: View {
 
     var body: some View {
         let count = model.isRecording ? Self.recordingBars : Self.restingBars
-        TimelineView(.animation(minimumInterval: 0.05)) { timeline in
+        TimelineView(.animation(minimumInterval: 0.05, paused: !model.onScreen)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
             HStack(spacing: Self.barSpacing) {
                 ForEach(0..<count, id: \.self) { i in
@@ -506,6 +522,7 @@ final class OverlayPill {
 
     private func teardown() {
         panel?.orderOut(nil)
+        model.onScreen = false
         panel = nil
         hostingView = nil
     }
@@ -555,6 +572,7 @@ final class OverlayPill {
         }
         panel.alphaValue = 1
         panel.orderFront(nil)
+        model.onScreen = true
         DispatchQueue.main.async { [model] in
             model.visible = true
         }
@@ -609,6 +627,7 @@ final class OverlayPill {
         model.visible = false
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             self?.panel?.orderOut(nil)
+            self?.model.onScreen = false
         }
     }
 
