@@ -50,9 +50,15 @@ public enum Bounded {
             // Deliberately not a Task: `operation` is blocking, and parking a
             // cooperative-pool thread inside CoreAudio would starve the pool.
             // A dedicated Thread can be stranded without consequence.
+            let context = Diagnostics.context
+            let sink = Diagnostics.sink
             let thread = Thread {
-                let value = operation({ gate.didTimeOut })
-                gate.finish(value)
+                Diagnostics.$context.withValue(context) {
+                    Diagnostics.$sink.withValue(sink) {
+                        let value = operation({ gate.didTimeOut })
+                        gate.finish(value)
+                    }
+                }
             }
             thread.stackSize = 512 * 1024
             thread.start()

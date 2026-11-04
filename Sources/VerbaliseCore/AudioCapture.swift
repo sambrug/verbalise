@@ -61,6 +61,7 @@ public final class AVAudioCaptureStream: AudioStream, @unchecked Sendable {
             throw AudioCaptureError.unsupportedFormat
         }
 
+        log("capture: hardware_sample_rate=\(hardwareFormat.sampleRate) channels=\(hardwareFormat.channelCount) target_sample_rate=\(targetSampleRate)")
         let converter = AVAudioConverter(from: hardwareFormat, to: targetFormat)
         lock.withLock { self.converter = converter }
 
@@ -225,6 +226,10 @@ public struct AVAudioCaptureOpener: AudioStreamOpening {
                 log("audio: input device '\(deviceName)' not found, using the system default")
             }
         }
+
+        let devices = AudioDevices.inputDevices()
+        let selected = resolved.flatMap { id in devices.first { $0.id == id } } ?? AudioDevices.defaultInputDevice()
+        log("capture: device=\(selected?.name ?? "unknown") device_id=\(selected?.id ?? 0) system_default=\(resolved == nil)")
 
         // Deliberately not started here -- see AudioStreamOpening. The caller
         // starts it once it knows the dictation is still wanted.

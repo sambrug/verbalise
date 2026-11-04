@@ -76,6 +76,7 @@ public actor TextInserter {
     }
 
     private func pasteViaClipboard(_ text: String, settings: Settings) async -> Outcome {
+        log("insertion: clipboard_begin release_delay_s=\(settings.releaseDelay) restore_delay_s=\(settings.advanced.clipboardRestoreDelay)")
         let previous = pasteboard.read()
 
         guard await writeVerified(text) else {
@@ -125,11 +126,10 @@ public actor TextInserter {
     /// unchecked write is indistinguishable from a successful one until the
     /// wrong text lands in the user's document.
     private func writeVerified(_ text: String) async -> Bool {
+        let started = clock.now
         for attempt in 1...writeAttempts {
             if pasteboard.write(text), pasteboard.read() == text {
-                if attempt > 1 {
-                    log("clipboard: write took \(attempt) attempts")
-                }
+                log("clipboard: write_verified attempts=\(attempt) elapsed_s=\(clock.now - started)")
                 return true
             }
             if attempt < writeAttempts {
@@ -156,14 +156,21 @@ public actor TextInserter {
         let pasteboard = self.pasteboard
         let clock = self.clock
 
+        let trace = Diagnostics.context
+        let sink = Diagnostics.sink
         Task.detached {
-            try? await clock.sleep(for: .seconds(delay))
+            await Diagnostics.$context.withValue(trace) {
+                await Diagnostics.$sink.withValue(sink) {
+                    try? await clock.sleep(for: .seconds(delay))
 
-            guard pasteboard.changeCount == ourChangeCount else {
-                log("clipboard: user copied during the restore window, leaving it alone")
-                return
+                    guard pasteboard.changeCount == ourChangeCount else {
+                        log("clipboard: user copied during the restore window, leaving it alone")
+                        return
+                    }
+                    let restored = pasteboard.write(previous)
+                    log("clipboard: restore success=\(restored)")
+                }
             }
-            _ = pasteboard.write(previous)
         }
     }
 }

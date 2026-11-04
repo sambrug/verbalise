@@ -67,6 +67,11 @@ public actor DictationController {
 
     /// Bumped on every start and every reset. See the type doc.
     private var generation = 0
+    private var trace = Diagnostics.Context()
+    private var firstAudioAt: Double?
+    private var audioCallbacks = 0
+    private var maxAudioGap: Double = 0
+    private var chunkScanSeconds: Double = 0
 
     private var stream: (any AudioStream)?
     private var buffer: [Float] = []
@@ -110,9 +115,17 @@ public actor DictationController {
     /// Called by the capture layer for each delivered buffer.
     public func appendAudio(_ samples: [Float]) {
         guard state == .recording else { return }
+        let receivedAt = clock.now
+        if firstAudioAt == nil {
+            firstAudioAt = receivedAt
+            log("dictation[\(trace.dictation)]: first_audio start_to_first_audio_s=\(receivedAt - recordStartedAt)")
+        } else { maxAudioGap = max(maxAudioGap, receivedAt - lastAudioAt) }
+        audioCallbacks += 1
         buffer.append(contentsOf: samples)
-        lastAudioAt = clock.now
+        lastAudioAt = receivedAt
+        let scanStarted = Diagnostics.now
         cutChunkIfPaused()
+        chunkScanSeconds += Diagnostics.now - scanStarted
     }
 
     /// Hands everything since the last cut to the streamer when the speaker
@@ -140,6 +153,7 @@ public actor DictationController {
         secondsAgo: Double = 20
     ) {
         generation += 1
+        trace = Diagnostics.Context()
         self.stream = stream
         self.buffer = audio
         self.state = .recording
@@ -151,14 +165,27 @@ public actor DictationController {
     // MARK: - Start
 
     public func startRecording() async {
-        guard state == .idle else { return }
+        guard state == .idle else {
+            log("dictation: start_ignored state=\(state.rawValue)")
+            return
+        }
+        trace = Diagnostics.Context()
+        await Diagnostics.$context.withValue(trace) { await startRecordingTraced() }
+    }
+
+    private func startRecordingTraced() async {
 
         generation += 1
         let gen = generation
         buffer.removeAll()
         streamerLastCut = 0
+        firstAudioAt = nil
+        audioCallbacks = 0
+        maxAudioGap = 0
+        chunkScanSeconds = 0
+        log("dictation: start model=\(settings.transcriptionModel.rawValue) language=\(settings.effectiveLanguage ?? "auto") vocabulary_terms=\(settings.vocabulary.count) corrections=\(settings.phoneticCorrections.count) streaming=\(settings.advanced.streamingTranscribeEnabled) trim=\(settings.advanced.trimSilenceEnabled) sample_rate=\(settings.sampleRate) \(Diagnostics.systemState)")
         streamer = settings.advanced.streamingTranscribeEnabled
-            ? StreamingTranscriber(transcriber: transcriber)
+            ? StreamingTranscriber(transcriber: transcriber, context: trace, sampleRate: settings.sampleRate)
             : nil
         recordStartedAt = clock.now
         lastAudioAt = clock.now
@@ -167,7 +194,9 @@ public actor DictationController {
         emit(.pill(.show("recording")))
 
         do {
+            let openStarted = clock.now
             let opened = try await session.open()
+            log("capture: open_s=\(clock.now - openStarted)")
 
             // The open is bounded but not instant, and Escape or a key release
             // can land while it is in flight.
@@ -176,7 +205,9 @@ public actor DictationController {
                 return
             }
 
+            let startStarted = clock.now
             try opened.start()
+            log("capture: start_s=\(clock.now - startStarted)")
             stream = opened
             startMaxDurationTimer(gen: gen)
         } catch {
@@ -196,8 +227,24 @@ public actor DictationController {
 
     // MARK: - Stop and transcribe
 
-    public func stopAndTranscribe() async {
-        guard state == .recording else { return }
+    public func stopAndTranscribe(requestedAt: Double? = nil, reason: String = "release") async {
+        guard state == .recording else {
+            log("dictation: stop_ignored state=\(state.rawValue) reason=\(reason)")
+            return
+        }
+        await Diagnostics.$context.withValue(trace) {
+            await stopAndTranscribeTraced(requestedAt: requestedAt, reason: reason)
+        }
+    }
+
+    private func stopAndTranscribeTraced(requestedAt: Double?, reason: String) async {
+        let acceptedAt = clock.now
+        let releaseAt = requestedAt ?? acceptedAt
+        var completion = "abandoned"
+        defer {
+            log("dictation: end outcome=\(completion) stop_reason=\(reason) stop_to_end_s=\(clock.now - releaseAt) \(Diagnostics.systemState)")
+        }
+        log("dictation: stop reason=\(reason) dispatch_s=\(acceptedAt - releaseAt) recording_wall_s=\(acceptedAt - recordStartedAt) audio_callbacks=\(audioCallbacks) max_callback_gap_s=\(maxAudioGap) pause_scan_s=\(chunkScanSeconds)")
 
         state = .transcribing
         stopStartedAt = clock.now
@@ -209,16 +256,20 @@ public actor DictationController {
 
         // Teardown is bounded: a wedged device must not hold the transcription
         // hostage. The audio we already captured is still good.
+        let teardownStarted = clock.now
         if let live = stream {
             stream = nil
             await session.teardown(live)
         }
+        log("capture: teardown_s=\(clock.now - teardownStarted)")
 
         let audio = buffer
         buffer.removeAll()
 
         let duration = Double(audio.count) / Double(max(settings.sampleRate, 1))
+        log("capture: audio_s=\(duration) samples=\(audio.count) streamed_audio_s=\(Double(streamerLastCut) / Double(max(settings.sampleRate, 1)))")
         guard duration >= settings.minDuration else {
+            completion = "too_short"
             log("dictation: \(String(format: "%.2f", duration))s is under min_duration, ignoring")
             finish(gen: gen)
             return
@@ -229,7 +280,9 @@ public actor DictationController {
         var pillDismissal: PillCommand = .hide
 
         do {
+            let transcriptionStarted = clock.now
             let raw = try await finishTranscription(audio)
+            log("dictation: transcription_wait_s=\(clock.now - transcriptionStarted)")
 
             // The dictation may have been abandoned while the model was
             // working. Typing now would insert text into whatever the user
@@ -242,16 +295,24 @@ public actor DictationController {
             // Annotations first: stripping "[BLANK_AUDIO]" can leave nothing
             // but punctuation behind, and cleaning is what recognises that as
             // "no transcription" and types nothing at all.
+            let cleanStarted = clock.now
             let spoken = TextPipeline.stripNonSpeechAnnotations(raw)
             let cleaned = TextPipeline.cleanHallucinations(spoken)
             let corrected = TextPipeline.applyPhoneticCorrections(
                 cleaned, corrections: settings.orderedPhoneticCorrections
             )
 
+            log("text: cleaning_s=\(clock.now - cleanStarted) raw_chars=\(raw.count) spoken_chars=\(spoken.count) cleaned_chars=\(cleaned.count) corrected_chars=\(corrected.count) corrections_changed_text=\(cleaned != corrected)")
             if corrected.isEmpty {
+                completion = "empty"
                 log("dictation: nothing left after cleaning, typing nothing")
             } else {
+                let insertStarted = clock.now
                 let outcome = await inserter.insert(corrected, settings: settings)
+                completion = String(describing: outcome.path)
+                // This measures the key event/clipboard handoff, not the destination
+                // app rendering it. macOS provides no acknowledgement for that.
+                log("insertion: path=\(completion) insert_s=\(clock.now - insertStarted) stop_to_handoff_s=\(clock.now - releaseAt) warning=\(outcome.warning != nil)")
                 if let warning = outcome.warning {
                     emit(.warning(warning))
                 }
@@ -265,6 +326,7 @@ public actor DictationController {
                 emit(.statsChanged)
             }
         } catch {
+            completion = "error"
             log("dictation: transcription failed — \(error)")
             guard generation == gen else { return }
             // An error that explains itself is worth passing through: "the
@@ -285,10 +347,14 @@ public actor DictationController {
     /// a silently missing sentence in the middle is worse than a slow one, and
     /// the user has no way to tell the difference from the text alone.
     private func finishTranscription(_ audio: [Float]) async throws -> String {
+        let dictationID = Diagnostics.context?.dictation ?? trace.dictation
         guard let streamer, streamerLastCut > 0 else {
             // Nothing was streamed -- either disabled, or the dictation was
             // too short to reach a sentence boundary.
-            return try await transcriber.transcribe(trimmedIfEnabled(audio))
+            let context = Diagnostics.Context(dictation: dictationID, chunk: "whole")
+            return try await Diagnostics.$context.withValue(context) {
+                try await transcriber.transcribe(trimmedIfEnabled(audio))
+            }
         }
 
         // The tail after the last cut, if anyone actually spoke in it. Handing
@@ -296,13 +362,18 @@ public actor DictationController {
         // watching." on the end of the user's text.
         let tail = Array(audio[min(streamerLastCut, audio.count)...])
         if Silence.hasVoice(tail) {
-            await streamer.feed(tail)
+            await streamer.feed(tail, reason: "tail")
+        } else {
+            log("streaming: silent_tail_skipped samples=\(tail.count)")
         }
 
         let chunks = await streamer.drain()
         if await streamer.failed {
             log("streaming: a chunk failed, falling back to a single pass")
-            return try await transcriber.transcribe(trimmedIfEnabled(audio))
+            let context = Diagnostics.Context(dictation: dictationID, chunk: "recovery")
+            return try await Diagnostics.$context.withValue(context) {
+                try await transcriber.transcribe(trimmedIfEnabled(audio))
+            }
         }
         return TextPipeline.joinStreamingChunks(chunks)
     }
@@ -368,6 +439,7 @@ public actor DictationController {
     /// The universal escape hatch (legacy-python/daemon.py:1458). Everything in flight is
     /// abandoned by moving the generation on.
     public func forceReset() async {
+        log("dictation[\(trace.dictation)]: reset state=\(state.rawValue) in_flight_results_abandoned=true")
         generation += 1
         let live = stream
         stream = nil
@@ -450,7 +522,7 @@ public actor DictationController {
             return
         }
         log("dictation: hit max_duration, stopping")
-        await stopAndTranscribe()
+        await stopAndTranscribe(reason: "max_duration")
     }
 
     /// Test seam for the leaked-timer scenario.
@@ -463,7 +535,7 @@ public actor DictationController {
     /// Test seam: `_prepareForTest` bypasses `startRecording`, which is where
     /// the streamer is normally created.
     public func startStreamingForTest() {
-        streamer = StreamingTranscriber(transcriber: transcriber)
+        streamer = StreamingTranscriber(transcriber: transcriber, context: trace, sampleRate: settings.sampleRate)
         streamerLastCut = 0
     }
 }

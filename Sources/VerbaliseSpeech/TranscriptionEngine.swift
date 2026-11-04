@@ -34,6 +34,7 @@ public actor TranscriptionEngine: Transcriber {
 
     private var whisperKit: WhisperKit?
     private var loadedModel: TranscriptionModel?
+    private var activeTranscriptions = 0
 
     /// The load currently running, and the tier it is loading.
     ///
@@ -70,6 +71,7 @@ public actor TranscriptionEngine: Transcriber {
             unload()
         }
         self.settings = settings
+        log("config: engine model=\(settings.transcriptionModel.rawValue) language=\(settings.effectiveLanguage ?? "auto") vocabulary_terms=\(settings.vocabulary.count) corrections=\(settings.phoneticCorrections.count)")
     }
 
     public var isLoaded: Bool { whisperKit != nil }
@@ -204,7 +206,10 @@ public actor TranscriptionEngine: Transcriber {
 
         // Join the load already in flight rather than racing it.
         if let loadTask, loadingModel == model {
+            let joinedAt = Diagnostics.now
+            log("model: joining_existing_load tier=\(model.rawValue)")
             try await loadTask.value
+            log("model: joined_load wait_s=\(Diagnostics.now - joinedAt)")
             return
         }
 
@@ -262,9 +267,11 @@ public actor TranscriptionEngine: Transcriber {
         clearModel()
 
         onPhase(.loading)
-        let loadStarted = Date()
+        let loadStarted = Diagnostics.now
+        log("model: load_start variant=\(variant) prewarm=\(model != .fast) \(Diagnostics.systemState)")
         let config = WhisperKitConfig(
             modelFolder: folder.path,
+            textDecoder: DiagnosticTextDecoder(),
             verbose: false,
             logLevel: .error,
             // ModelPreparer has already run the one-off, low-memory prewarm.
@@ -306,7 +313,7 @@ public actor TranscriptionEngine: Transcriber {
         // has no WhisperKit equivalent, so it is simply not logged.
         log(String(
             format: "model: %@ loaded %@ in %.2fs",
-            variant, wasCold ? "cold" : "warm", Date().timeIntervalSince(loadStarted)
+            variant, wasCold ? "cold" : "warm", Diagnostics.now - loadStarted
         ))
         onPhase(.ready)
     }
@@ -333,23 +340,71 @@ public actor TranscriptionEngine: Transcriber {
     // MARK: - Transcribe
 
     public func transcribe(_ audio: [Float]) async throws -> String {
-        try await ensureLoaded()
-        guard let whisperKit else { return "" }
+        let context = Diagnostics.context ?? Diagnostics.Context(chunk: "standalone")
+        return try await Diagnostics.$context.withValue(context) {
+            try await transcribeTraced(audio)
+        }
+    }
 
-        let started = Date()
-        let results = try await whisperKit.transcribe(
-            audioArray: audio,
-            decodeOptions: decodingOptions(for: whisperKit)
-        )
-        let text = results.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
-
-        let elapsed = Date().timeIntervalSince(started)
-        let audioSeconds = Double(audio.count) / Double(max(settings.sampleRate, 1))
-        log(String(
-            format: "transcribe: %.1fs audio in %.2fs (%.1fx realtime)",
-            audioSeconds, elapsed, elapsed > 0 ? audioSeconds / elapsed : 0
-        ))
-        return text
+    private func transcribeTraced(_ audio: [Float]) async throws -> String {
+        let requestedAt = Diagnostics.now
+        let initiallyLoaded = whisperKit != nil
+        activeTranscriptions += 1
+        defer { activeTranscriptions -= 1 }
+        log("transcribe: requested model_loaded=\(initiallyLoaded) active_calls=\(activeTranscriptions) samples=\(audio.count)")
+        do {
+            try await ensureLoaded()
+            guard let whisperKit else {
+                log("transcribe: model_unavailable_after_load")
+                return ""
+            }
+            let loadWait = Diagnostics.now - requestedAt
+            let callSettings = settings
+            let options = decodingOptions(for: whisperKit)
+            let audioSeconds = Double(audio.count) / Double(max(callSettings.sampleRate, 1))
+            var energy = 0.0
+            var peak: Float = 0
+            var clipped = 0
+            var nonfinite = 0
+            for sample in audio {
+                guard sample.isFinite else { nonfinite += 1; continue }
+                energy += Double(sample) * Double(sample)
+                peak = max(peak, abs(sample))
+                if abs(sample) >= 0.999 { clipped += 1 }
+            }
+            log("transcribe: begin model=\(callSettings.transcriptionModel.whisperKitModelName) audio_s=\(audioSeconds) model_wait_s=\(loadWait) vocabulary_terms=\(callSettings.vocabulary.count) prompt_tokens=\(options.promptTokens?.count ?? 0) language=\(options.language ?? "auto") max_retries=\(options.temperatureFallbackCount) rms=\(sqrt(energy / Double(max(audio.count, 1)))) peak=\(peak) clipped_samples=\(clipped) nonfinite_samples=\(nonfinite) \(Diagnostics.systemState)")
+            let started = Diagnostics.now
+            let telemetry = DecodeTelemetry()
+            let results = try await DecodeTelemetry.$current.withValue(telemetry) {
+                try await whisperKit.transcribe(audioArray: audio, decodeOptions: options)
+            }
+            let text = results.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+            let elapsed = Diagnostics.now - started
+            let counts = telemetry.counts
+            log(String(format: "transcribe: %.1fs audio in %.2fs (%.1fx realtime) total_s=%.3f model_wait_s=%.3f attempts=%d retries=%d result_chars=%d active_calls=%d %@",
+                       audioSeconds, elapsed, elapsed > 0 ? audioSeconds / elapsed : 0,
+                       Diagnostics.now - requestedAt, loadWait, counts.attempts, counts.retries,
+                       text.count, activeTranscriptions, Diagnostics.systemState))
+            for (index, result) in results.enumerated() {
+                let t = result.timings
+                // Upstream decode_pipeline includes encoding/windowing; these
+                // fields overlap and must not be added to calculate elapsed time.
+                log(String(format: "transcribe: breakdown result=%d pipeline_s=%.3f audio_processing_s=%.3f mel_s=%.3f encode_s=%.3f decode_init_s=%.3f decode_pipeline_s=%.3f prediction_s=%.3f filtering_s=%.3f sampling_s=%.3f cache_s=%.3f failed_attempt_s=%.3f windows=%.0f loops=%.0f",
+                           index, t.fullPipeline, t.audioProcessing, t.logmels, t.encoding,
+                           t.decodingInit, t.decodingLoop, t.decodingPredictions,
+                           t.decodingFiltering, t.decodingSampling, t.decodingKvCaching,
+                           t.decodingFallback, t.totalEncodingRuns, t.totalDecodingLoops))
+                for segment in result.segments {
+                    log(String(format: "transcribe: segment result=%d id=%d start_s=%.3f end_s=%.3f temperature=%.2f avg_logprob=%.3f no_speech_prob=%.3f compression=%.3f output_tokens=%d",
+                               index, segment.id, segment.start, segment.end, segment.temperature,
+                               segment.avgLogprob, segment.noSpeechProb, segment.compressionRatio, segment.tokens.count))
+                }
+            }
+            return text
+        } catch {
+            log("transcribe: failed total_s=\(Diagnostics.now - requestedAt) active_calls=\(activeTranscriptions) error=\(error)")
+            throw error
+        }
     }
 
     private func decodingOptions(for whisperKit: WhisperKit) -> DecodingOptions {

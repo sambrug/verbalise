@@ -277,6 +277,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
         log("Verbalise launched")
+        let process = ProcessInfo.processInfo
+        log("diagnostics: schema=1 app=\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] ?? "unknown") build=\(Bundle.main.infoDictionary?["CFBundleVersion"] ?? "unknown") os=\(process.operatingSystemVersionString) processors=\(process.activeProcessorCount) ram_bytes=\(process.physicalMemory) \(Diagnostics.systemState)")
 
         startEventPump()
         installEditMenu()
@@ -673,7 +675,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         } else {
             if settings.soundEnabled { Sounds.playStop() }
-            Task { await controller.stopAndTranscribe() }
+            let releasedAt = Diagnostics.now
+            Task { await controller.stopAndTranscribe(requestedAt: releasedAt) }
         }
     }
 

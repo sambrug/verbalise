@@ -106,6 +106,27 @@ Trigger keys: `shift_r`, `shift_l`, `ctrl_r`, `ctrl_l`, `alt_r`, `alt_l`,
 
 Settings ▸ General ▸ Show Log.
 
+The log records millisecond timestamps and a recording ID. Streaming chunks have
+separate IDs within the recording. It includes capture startup and callback gaps,
+audio levels, chunk backlog, model loading, vocabulary token count, each recognition
+attempt and retry reason, model-stage timings, text-cleaning counts, and insertion
+outcomes. Thermal state and Low Power Mode help explain changes between runs.
+Dictated text, vocabulary contents and clipboard contents are not logged.
+
+`stop_to_handoff_s` measures the wait from the app receiving the release event until
+it posts the paste/typing events or copies the result. It cannot measure when the
+destination app displays the text. `transcription_wait_s` is the portion spent
+waiting for unfinished recognition after recording stops. A `retry_requested`
+attempt can be the last permitted attempt; the transcription summary's `retries`
+counts completed retry attempts. Model-stage timings can overlap, so do not add
+them together to calculate elapsed time. Thermal values are 0 (normal), 1 (fair),
+2 (serious) and 3 (critical).
+
+Logs live in `~/Library/Containers/com.sambruggen.verbalise/Data/Library/Logs/`.
+The current `verbalise.log` rotates at 10 MiB, retaining three archives named
+`verbalise.log.1` through `.3`; `.1` is the most recent. File writes run in the
+background, with no per-token or per-audio-buffer logging.
+
 **The trigger key does nothing.** Input Monitoring isn't granted. Check
 Settings ▸ Permissions.
 
